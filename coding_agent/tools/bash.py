@@ -4,12 +4,12 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 
 from ..errors import ToolError
 from .registry import Tool, ToolContext
-
 
 def dangerous_reason(command: str) -> str | None:
     """返回危险命令的原因描述；安全命令返回 None。"""
@@ -36,6 +36,15 @@ def dangerous_reason(command: str) -> str | None:
     return None
 
 
+# 非交互执行：关闭 stdin，并封死 git/pip/apt 等工具的交互提示
+_NONINTERACTIVE_ENV = {
+    "GIT_TERMINAL_PROMPT": "0",
+    "DEBIAN_FRONTEND": "noninteractive",
+    "PYTHONUNBUFFERED": "1",
+    "PIP_NO_INPUT": "1",
+}
+
+
 def run_bash(args: dict, ctx: ToolContext) -> str:
     command = args["command"]
     reason = dangerous_reason(command)
@@ -46,6 +55,7 @@ def run_bash(args: dict, ctx: ToolContext) -> str:
             raise ToolError(f"用户取消了危险命令：{command}")
 
     timeout = args.get("timeout") or ctx.command_timeout
+    env = {**os.environ, **_NONINTERACTIVE_ENV}
     try:
         proc = subprocess.run(
             command,
@@ -54,6 +64,8 @@ def run_bash(args: dict, ctx: ToolContext) -> str:
             timeout=timeout,
             capture_output=True,
             text=True,
+            stdin=subprocess.DEVNULL,
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise ToolError(f"命令超时（>{timeout}s）：{command}") from exc
@@ -70,7 +82,11 @@ def run_bash(args: dict, ctx: ToolContext) -> str:
 
 BASH = Tool(
     name="bash",
-    description="在工作目录内执行 shell 命令，返回 stdout/stderr 与退出码。破坏性命令需用户确认。",
+    description=(
+        "在工作目录内非交互执行 shell 命令（stdin 已关闭），返回 stdout/stderr 与退出码；"
+        "输出超长会被截断。需要交互输入的程序请改用非交互 flag（如 --yes / -y / --no-input）。"
+        "破坏性命令需用户确认。"
+    ),
     parameters={
         "type": "object",
         "properties": {

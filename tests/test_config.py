@@ -11,6 +11,8 @@ def test_defaults():
     assert c.max_steps == 30
     assert c.max_failures == 3
     assert c.command_timeout == 120
+    assert c.max_tokens == 48_000
+    assert c.max_tool_result_chars == 20_000
     assert c.resolved_model == "deepseek-chat"
     assert c.resolved_base_url == "https://api.deepseek.com"
 

@@ -10,7 +10,7 @@ from pathlib import Path
 from ..errors import ToolError
 from .registry import Tool, ToolContext
 
-_MAX_READ_BYTES = 256 * 1024  # 单次读取上限，避免把超大文件整个塞进上下文
+_MAX_READ_BYTES = 256 * 1024  # 单次整读上限；超限且未指定 offset/limit 时拒绝整读
 
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
@@ -38,15 +38,20 @@ def read_file(args: dict, ctx: ToolContext) -> str:
     if not path.is_file():
         raise ToolError(f"文件不存在：{path}")
     try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise ToolError(f"读取失败：{exc}") from exc
+    if size > _MAX_READ_BYTES and not (args.get("offset") or args.get("limit")):
+        raise ToolError(
+            f"文件过大（{size} 字节，上限 {_MAX_READ_BYTES}），已拒绝整读。"
+            f"请用 grep 定位关键行，或用 read_file 指定 offset/limit 分片读取。"
+        )
+    try:
         data = path.read_bytes()
     except OSError as exc:
         raise ToolError(f"读取失败：{exc}") from exc
     if b"\x00" in data[:4096]:
         raise ToolError(f"疑似二进制文件，跳过读取：{path}")
-    truncated = False
-    if len(data) > _MAX_READ_BYTES:
-        data = data[:_MAX_READ_BYTES]
-        truncated = True
     text = data.decode("utf-8", errors="replace")
     lines = text.splitlines()
 
@@ -54,10 +59,7 @@ def read_file(args: dict, ctx: ToolContext) -> str:
     limit = args.get("limit")
     start = max(0, offset - 1) if offset else 0
     end = start + limit if limit else len(lines)
-    result = "\n".join(lines[start:end])
-    if truncated:
-        result += f"\n…（文件过大，仅显示前 {_MAX_READ_BYTES} 字节）"
-    return result
+    return "\n".join(lines[start:end])
 
 
 def write_file(args: dict, ctx: ToolContext) -> str:
@@ -204,7 +206,7 @@ def _apply_patch_text(ctx: ToolContext, patch_text: str) -> str:
 
 READ_FILE = Tool(
     name="read_file",
-    description="读取一个文本文件的内容。路径相对于工作目录。",
+    description="读取文本文件内容（相对工作目录）。超大文件会拒绝整读，请先 grep 定位再用 offset/limit 分片读取。",
     parameters={
         "type": "object",
         "properties": {

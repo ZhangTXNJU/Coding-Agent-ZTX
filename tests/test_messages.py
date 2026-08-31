@@ -1,7 +1,7 @@
 """messages 模块测试：消息模型、序列化、token 估算、压缩。"""
 from __future__ import annotations
 
-from coding_agent.messages import Conversation, Message, estimate_tokens, messages_to_text
+from coding_agent.messages import Conversation, Message, estimate_tokens, messages_to_text, truncate_text
 
 
 def test_message_to_openai_by_role():
@@ -70,3 +70,48 @@ def test_messages_to_text():
     assert "[user] hello" in text
     assert "[tool:grep]" in text
     assert len(text) < 600  # 工具结果被截断
+
+
+def test_truncate_text_keeps_head_tail():
+    text = "abcdefghij" * 100  # 1000 字符
+    out = truncate_text(text, max_chars=100)
+    assert len(out) < 1000
+    assert "已省略" in out
+    assert out.startswith("abcdefghij")
+    assert out.endswith("abcdefghij")
+
+
+def test_truncate_text_noop_when_short():
+    text = "hello"
+    assert truncate_text(text, max_chars=100) == text
+
+
+def test_compact_tail_never_starts_with_tool():
+    # 构造：尾部若按朴素 keep_recent 切分会落在 tool 消息上（其 assistant 已被折叠），
+    # 边界安全逻辑应推进切点，使尾部以非 tool 消息开头。
+    c = Conversation()
+    c.add_user("任务")
+    for i in range(6):
+        c.add_assistant("", tool_calls=[{"id": f"c{i}", "type": "function", "function": {"name": "bash", "arguments": "{}"}}])
+        c.add_tool(f"c{i}", f"result {i}", name="bash")
+    c.compact(messages_to_text, keep_recent=6)
+    # 折叠后首条消息不应是孤立的 tool 消息
+    assert c.messages[0].role in ("user", "assistant")
+    assert c.summary != ""
+
+
+def test_compact_accumulates_prior_summary():
+    def _join(messages):
+        return " | ".join(m.content for m in messages)
+
+    c = Conversation()
+    for i in range(10):
+        c.add_user(f"msg {i}")
+    c.compact(_join, keep_recent=4)
+    assert "msg 0" in c.summary and "msg 5" in c.summary
+    c.add_user("继续")
+    c.add_user("继续2")
+    c.add_user("继续3")
+    c.compact(_join, keep_recent=2)
+    # 上一轮摘要应作为输入并入第二轮，而不是被丢弃
+    assert "msg 0" in c.summary

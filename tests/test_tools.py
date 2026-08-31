@@ -265,3 +265,41 @@ def test_registry_duplicate_raises():
     reg.register(READ_FILE)
     with pytest.raises(ValueError):
         reg.register(READ_FILE)
+
+
+# --------------------------------------------------------------------------- #
+# 健壮性：大文件拒读 / 非交互执行
+# --------------------------------------------------------------------------- #
+
+
+def test_read_file_rejects_oversized(ctx):
+    (ctx.workdir / "big.txt").write_text("x" * (256 * 1024 + 1))
+    with pytest.raises(ToolError, match="过大"):
+        READ_FILE.handler({"path": "big.txt"}, ctx)
+
+
+def test_read_file_oversized_with_offset_allowed(ctx):
+    # 指定 offset/limit 分片读取超限文件时不应被拒绝
+    (ctx.workdir / "big.txt").write_text("line\n" * 60_000)  # > 256KB
+    out = READ_FILE.handler({"path": "big.txt", "offset": 3, "limit": 2}, ctx)
+    assert out.splitlines() == ["line", "line"]
+
+
+def test_run_bash_is_noninteractive(ctx, monkeypatch):
+    import subprocess as sp
+
+    captured: dict = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return NS(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("coding_agent.tools.bash.subprocess.run", fake_run)
+    out = BASH.handler({"command": "echo hi"}, ctx)
+
+    assert captured["kwargs"]["stdin"] is sp.DEVNULL
+    env = captured["kwargs"]["env"]
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["DEBIAN_FRONTEND"] == "noninteractive"
+    assert "exit_code: 0" in out

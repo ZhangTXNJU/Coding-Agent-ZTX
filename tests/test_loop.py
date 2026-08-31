@@ -111,3 +111,33 @@ def test_malformed_arguments_recovered(tmp_path):
     ])
     result = make_agent(tmp_path, client).run("跑个命令")
     assert result == "ok"
+
+
+def test_tool_result_truncated_in_context(tmp_path):
+    # 工具返回超长结果时，写入上下文前应被截断
+    (tmp_path / "big.txt").write_text("x" * 25_000)
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "read_file", '{"path": "big.txt"}')]),
+        resp(content="已读", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    agent.run("读大文件")
+    tool_msg = next(m for m in agent.conversation.messages if m.role == "tool")
+    assert "已省略" in tool_msg.content
+    assert len(tool_msg.content) < 25_000
+
+
+def test_compaction_triggers_when_over_budget(tmp_path):
+    # 用小预算强制触发压缩：大量历史应被折叠成摘要
+    config = AgentConfig(max_steps=3, max_failures=3, max_tokens=300)
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "list_dir", '{"path": "."}')]),
+        resp(content="完成", tool_calls=None, finish_reason="stop"),
+    ])
+    conv = Conversation(system_prompt="sys")
+    for i in range(40):
+        conv.add_user(f"历史消息 {i} " + "x" * 80)
+    agent = Agent(config, client, build_default_registry(), conv, ToolContext(workdir=tmp_path))
+    agent.run("继续")
+    assert conv.summary != ""
+    assert len(conv.messages) < 40

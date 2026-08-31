@@ -35,6 +35,8 @@ class AgentConfig:
     max_steps: int = 30
     max_failures: int = 3
     command_timeout: int = 120
+    max_tokens: int = 48_000  # 上下文预算（估算 token），默认给 DeepSeek 64K 留出余量
+    max_tool_result_chars: int = 20_000  # 单次工具结果写入上下文前的截断上限
     auto_approve: bool = False
     workdir: Path = field(default_factory=Path.cwd)
 
@@ -51,7 +53,8 @@ class AgentConfig:
             f"AgentConfig(provider={self.provider!r}, model={self.resolved_model!r}, "
             f"base_url={self.resolved_base_url!r}, api_key=<set:{bool(self.api_key)}>, "
             f"max_steps={self.max_steps}, max_failures={self.max_failures}, "
-            f"command_timeout={self.command_timeout}, auto_approve={self.auto_approve})"
+            f"command_timeout={self.command_timeout}, max_tokens={self.max_tokens}, "
+            f"max_tool_result_chars={self.max_tool_result_chars}, auto_approve={self.auto_approve})"
         )
 
 
@@ -67,6 +70,8 @@ def load_config(**overrides) -> AgentConfig:
         "max_steps": _int_env("CODING_AGENT_MAX_STEPS", 30),
         "max_failures": _int_env("CODING_AGENT_MAX_FAILURES", 3),
         "command_timeout": _int_env("CODING_AGENT_COMMAND_TIMEOUT", 120),
+        "max_tokens": _int_env("CODING_AGENT_MAX_TOKENS", 48_000),
+        "max_tool_result_chars": _int_env("CODING_AGENT_MAX_TOOL_RESULT_CHARS", 20_000),
         "auto_approve": _env("CODING_AGENT_AUTO_APPROVE").lower() in ("1", "true", "yes"),
     }
     for key, value in overrides.items():

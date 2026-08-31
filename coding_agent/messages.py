@@ -15,6 +15,18 @@ def estimate_tokens(text: str) -> int:
     return cjk + (other + 3) // 4  # 向上取整，短文本至少 1 token
 
 
+def truncate_text(text: str, max_chars: int) -> str:
+    """截断超长文本：保留首尾，中间用省略标记占位（仿 Claude Code 的头尾截断）。"""
+    if len(text) <= max_chars:
+        return text
+    half = max_chars // 2
+    return (
+        text[:half]
+        + f"\n…[中间 {len(text) - max_chars} 字符已省略]…\n"
+        + text[-half:]
+    )
+
+
 @dataclass
 class Message:
     """单条消息。tool_calls 使用 OpenAI 线上格式（list[dict]）。"""
@@ -87,22 +99,29 @@ class Conversation:
         trimmed = 0
         for m in self.messages:
             if m.role == "tool" and len(m.content) > max_chars:
-                half = max_chars // 2
-                m.content = (
-                    m.content[:half]
-                    + f"\n…[中间 {len(m.content) - max_chars} 字符已省略]…\n"
-                    + m.content[-half:]
-                )
+                m.content = truncate_text(m.content, max_chars)
                 trimmed += 1
         return trimmed
 
     def compact(self, summarizer: Callable[[list[Message]], str], keep_recent: int = 6) -> str:
-        """二/三级：把较早消息折叠成摘要，仅保留最近 keep_recent 条。返回摘要文本。"""
+        """二/三级：把较早消息折叠成摘要，仅保留最近 keep_recent 条。返回摘要文本。
+
+        切点须落在非 tool 消息上：若尾部以孤立的 tool 消息开头（其 assistant 已被折叠），
+        会破坏 OpenAI 的 assistant(tool_calls)→tool 配对，故向前推进切点。
+        """
         if len(self.messages) <= keep_recent:
             return ""
-        old = self.messages[:-keep_recent]
+        cut = len(self.messages) - keep_recent
+        while cut < len(self.messages) and self.messages[cut].role == "tool":
+            cut += 1
+        if cut >= len(self.messages):
+            return ""  # 无法安全切分，放弃本轮压缩
+        old = self.messages[:cut]
+        if self.summary:
+            # 已有摘要时并入本轮待折叠内容，避免二次压缩丢失更早的历史
+            old = [Message("user", f"[更早历史摘要]\n{self.summary}")] + old
         self.summary = summarizer(old)
-        self.messages = self.messages[-keep_recent:]
+        self.messages = self.messages[cut:]
         return self.summary
 
 
