@@ -19,7 +19,6 @@ except ImportError:  # pragma: no cover - 极少数环境无 readline
 
 try:
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.application import get_app
     from prompt_toolkit.formatted_text import FormattedText
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
@@ -73,7 +72,6 @@ class UI:
                 style=PTStyle.from_dict(
                     {
                         "prompt": "bold #00d26a",
-                        "line": "#3f3f46",
                         "hint": "#71717a",
                     }
                 ),
@@ -153,20 +151,14 @@ class UI:
     # -- 交互 --------------------------------------------------------------- #
 
     def prompt(self) -> str:
-        """读取一行输入：常驻 ❯ 提示符 + 上下横线（prompt_toolkit）。"""
+        """读取一行输入：常驻 ❯ 提示符（prompt_toolkit）。"""
         if self._pt_session is not None:
             self.console.print("─" * (self.console.width or 80), style="dim")
             return self._pt_session.prompt(
                 message=FormattedText([("class:prompt", "❯ ")]),
                 rprompt=FormattedText([("class:hint", " /help · /exit ")]),
-                bottom_toolbar=self._bottom_toolbar,
             )
         return self.console.input("[bold green]❯ [/]")
-
-    def _bottom_toolbar(self):
-        """输入框底部：单条横线（薄边框，不受回删影响）。"""
-        width = get_app().output.get_size().columns
-        return [("class:line", "─" * width)]
 
     def confirm(self, command: str) -> bool:
         """危险命令确认：[y/N] 提示，仅显式同意才放行。"""
