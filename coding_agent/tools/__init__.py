@@ -5,9 +5,10 @@ from .bash import BASH
 from .files import APPLY_PATCH, EDIT_FILE, READ_FILE, WRITE_FILE
 from .registry import Tool, ToolContext, ToolRegistry
 from .search import GLOB, GREP, LIST_DIR
+from .skill import USE_SKILL
 from .todo import TODO_WRITE
 
-_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, TODO_WRITE)
+_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, TODO_WRITE, USE_SKILL)
 
 
 def build_default_registry() -> ToolRegistry:
@@ -32,4 +33,5 @@ __all__ = [
     "GREP",
     "BASH",
     "TODO_WRITE",
+    "USE_SKILL",
 ]

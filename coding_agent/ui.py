@@ -157,15 +157,43 @@ class UI:
             table.add_row(str(i), s.id, s.created_at, s.title or "（无标题）", str(s.message_count))
         self.console.print(table)
 
+    def render_skills(self, skills) -> None:
+        """以表格列出全部可用 skill（名称/来源/用途）。"""
+        from rich.table import Table
+
+        if not skills:
+            self.info("暂无可用 skill。")
+            return
+        table = Table(title="可用 skill", title_justify="left", border_style="dim", pad_edge=False)
+        table.add_column("名称", style="cyan", no_wrap=True)
+        table.add_column("来源", style="dim", no_wrap=True)
+        table.add_column("用途")
+        for s in skills:
+            src = "内置" if s.source == "builtin" else "自定义"
+            table.add_row(s.name, src, s.description)
+        self.console.print(table)
+
+    def render_skill(self, skill) -> None:
+        """展示单个 skill 的用途与完整执行指引。"""
+        body = Text()
+        body.append(skill.description + "\n\n", style="bold")
+        body.append(skill.instructions, style="default")
+        source = "内置" if skill.source == "builtin" else "自定义"
+        self.console.print(
+            Panel(body, title=f"skill · {skill.name} · {source}", title_align="left", border_style="cyan")
+        )
+
     def help(self) -> None:
         self.console.print(
             "[bold]可用命令：[/]\n"
             "  [cyan]/help[/]        显示本帮助\n"
+            "  [cyan]/skills[/]      列出全部可用 skill（内置 + 自定义）\n"
+            "  [cyan]/skill[/]       查看某个 skill 的指引（/skill <名称>）\n"
             "  [cyan]/sessions[/]    列出全部会话历史\n"
             "  [cyan]/continue[/]    续接会话（/continue <ID或序号>，缺省为最新）\n"
             "  [cyan]/clear[/]       清空当前对话上下文\n"
             "  [cyan]/exit[/]        退出（或输入 exit / quit）\n"
-            "  [dim]直接输入自然语言任务 → 交给 agent 执行[/]"
+            "  [dim]直接输入自然语言任务 → 交给 agent 执行（匹配 skill 时自动调用）[/]"
         )
 
     # -- 交互 --------------------------------------------------------------- #

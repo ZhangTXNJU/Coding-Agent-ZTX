@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..errors import ToolError
+from ..skills import SkillRegistry
 
 
 @dataclass
@@ -22,6 +23,8 @@ class ToolContext:
     confirm: Callable[[str], bool] | None = None
     # todo_write 的状态载体（跨步持久，直到会话结束）。
     todos: list = field(default_factory=list)
+    # use_skill 的 skill 来源（内置 + 自定义）。
+    skills: SkillRegistry = field(default_factory=SkillRegistry)
 
 
 @dataclass

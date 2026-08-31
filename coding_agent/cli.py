@@ -59,25 +59,34 @@ def main(argv: list[str] | None = None) -> int:
 
 def _build(config: AgentConfig, args):
     """组装 UI / client / registry / agent，注入流式渲染与确认回调。"""
-    from .agent import SYSTEM_PROMPT, Agent
+    from .agent import Agent, build_system_prompt
     from .llm.client import LLMClient
     from .messages import Conversation
+    from .skills import DEFAULT_SKILLS_DIR, build_skill_registry
     from .tools import ToolContext, build_default_registry
     from .ui import UI
 
     ui = UI(verbose=args.verbose)
     client = LLMClient(config)
     registry = build_default_registry()
+
+    skills, skill_errors, skill_warnings = build_skill_registry(DEFAULT_SKILLS_DIR)
+    for err in skill_errors:
+        ui.error(f"skill 加载失败：{err}")
+    for warn in skill_warnings:
+        ui.info(f"skill：{warn}")
+
     ctx = ToolContext(
         workdir=config.workdir,
         command_timeout=config.command_timeout,
         auto_approve=config.auto_approve,
+        skills=skills,
     )
     agent = Agent(
         config,
         client,
         registry,
-        Conversation(system_prompt=SYSTEM_PROMPT),
+        Conversation(system_prompt=build_system_prompt(skills)),
         ctx,
         on_text=ui.stream_text,
         on_tool_call=ui.tool_call,
@@ -128,7 +137,6 @@ def _run(config: AgentConfig, args) -> int:
 
 
 def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_session) -> int:
-    from .agent import SYSTEM_PROMPT
     from .messages import Conversation
     from .session import load_session
 
@@ -155,6 +163,12 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
         if line in ("/sessions", "/history", "/list"):
             _list_sessions(ui)
             continue
+        if line == "/skills":
+            _list_skills(ui, agent)
+            continue
+        if line.startswith("/skill"):
+            _show_skill(ui, agent, line[len("/skill"):].strip())
+            continue
         if line.startswith("/continue"):
             target = line[len("/continue"):].strip() or None
             new_sid = _resolve_session(ui, target)
@@ -167,7 +181,7 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
                     ui.error(str(exc))
             continue
         if line in ("/clear", "clear"):
-            agent.conversation = Conversation(system_prompt=SYSTEM_PROMPT)
+            agent.conversation = Conversation(system_prompt=agent.system_prompt)
             session_id = None
             ui.info("对话上下文已清空（下次保存将作为新会话）。")
             continue
@@ -230,6 +244,24 @@ def _resolve_session(ui, target: str | None) -> str | None:
             return sessions[idx - 1].id
     ui.error(f"未找到会话：{target}（用 /sessions 查看列表）")
     return None
+
+
+def _list_skills(ui, agent) -> None:
+    """列出全部可用 skill（内置 + 自定义）。"""
+    ui.render_skills(agent.ctx.skills.list())
+
+
+def _show_skill(ui, agent, name: str) -> None:
+    """展示单个 skill 的用途与执行指引；名称为空时回退为列表。"""
+    skills = agent.ctx.skills
+    if not name:
+        ui.render_skills(skills.list())
+        return
+    skill = skills.get(name)
+    if skill is None:
+        ui.error(f"skill 不存在：{name}（输入 /skills 查看可用 skill）")
+        return
+    ui.render_skill(skill)
 
 
 if __name__ == "__main__":

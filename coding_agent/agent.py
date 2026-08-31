@@ -15,6 +15,7 @@ from .errors import LLMError, MaxFailuresExceeded, MaxStepsExceeded, ParsingErro
 from .llm.client import ChatResponse, LLMClient, ToolCall
 from .messages import Conversation, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
+from .skills import SkillRegistry, build_skills_prompt
 from .tools import ToolContext, ToolRegistry
 
 SYSTEM_PROMPT = (
@@ -29,6 +30,14 @@ SYSTEM_PROMPT = (
     "6. 工具输出会被截断；大文件先用 grep 定位，不要整读大文件。\n"
     "7. 全部完成后，用一句话简洁总结你做了什么、如何验证的。"
 )
+
+
+def build_system_prompt(skills: SkillRegistry | None = None) -> str:
+    """基础系统提示 + 可用 skill 列表（供模型判断何时调用 use_skill）。"""
+    if skills is None:
+        return SYSTEM_PROMPT
+    extra = build_skills_prompt(skills)
+    return SYSTEM_PROMPT + "\n\n" + extra if extra else SYSTEM_PROMPT
 
 
 def _to_openai_tool_call(tc: ToolCall) -> dict:
@@ -62,6 +71,8 @@ class Agent:
         self.on_tool_call = on_tool_call
         self.on_tool_result = on_tool_result
         self.verbose = verbose
+        # 供 REPL /clear 复用（含 skill 列表的完整系统提示）
+        self.system_prompt = conversation.system_prompt
 
     def run(self, task: str) -> str:
         """执行一个任务，返回模型的最终回答。"""
