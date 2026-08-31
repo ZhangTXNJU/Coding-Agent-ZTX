@@ -7,7 +7,7 @@ import pytest
 
 from coding_agent.agent import Agent
 from coding_agent.config import AgentConfig
-from coding_agent.errors import ToolError
+from coding_agent.errors import MaxStepsExceeded, ToolError
 from coding_agent.llm.client import ChatResponse, ToolCall
 from coding_agent.messages import Conversation
 from coding_agent.tools import TASK, ToolContext, build_default_registry
@@ -123,10 +123,29 @@ def test_spawn_subagent_returns_conclusion_isolated_no_task(tmp_path):
 def test_spawn_subagent_max_steps_returns_incomplete(tmp_path):
     client = ScriptedClient([
         resp(tool_calls=[tc("c1", "list_dir", '{"path": "."}')]),
-    ] * 10)  # 子 agent 一直要调工具，永远不结束
+        resp(tool_calls=[tc("c2", "list_dir", '{"path": "."}')]),
+        resp(content="已完成一半，还差收尾验证", tool_calls=None, finish_reason="stop"),  # 收尾总结
+    ])
     agent = make_agent(tmp_path, client, subagent_max_steps=2)
     result = agent._spawn_subagent("做不完的任务")
     assert "未完成" in result
+    assert "已完成一半" in result  # 超步数前的进度总结被带回主 agent
+
+
+def test_main_max_steps_summarizes_progress(tmp_path):
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "list_dir", '{"path": "."}')]),
+        resp(tool_calls=[tc("c2", "list_dir", '{"path": "."}')]),
+        resp(tool_calls=[tc("c3", "list_dir", '{"path": "."}')]),
+        resp(content="进展：改了 x，尚未验证", tool_calls=None, finish_reason="stop"),  # 收尾总结
+    ])
+    agent = make_agent(tmp_path, client, max_steps=3)
+    with pytest.raises(MaxStepsExceeded) as excinfo:
+        agent.run("永远做不完")
+    assert "进展" in str(excinfo.value)
+    # 总结已作为 assistant 消息写入历史（供 /continue 续跑）
+    assert agent.conversation.messages[-1].role == "assistant"
+    assert "进展" in agent.conversation.messages[-1].content
 
 
 def test_spawn_subagent_empty_result_signals(tmp_path):

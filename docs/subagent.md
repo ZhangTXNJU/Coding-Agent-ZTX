@@ -38,6 +38,7 @@ Agent.run(主任务)
 | 独立上限 | `replace(config, max_steps=subagent_max_steps)`（默认 15） | FR-010 |
 | 权限沿用 | 复制 `workdir/timeout/auto_approve/confirm/skills`，破坏性命令仍走 `confirm` | FR-012 |
 | 结构化回报 | 捕获 `MaxStepsExceeded`/`MaxFailuresExceeded`/`AgentError` → `[子 agent 未完成/失败]`；空结果 → `[子 agent 未产出结果]` | FR-011 / FR-013 |
+| 超步数收尾 | 超 `max_steps` 时先让模型总结当前进展写入历史，再把总结随 `MaxStepsExceeded` 抛出（主/子 agent 均生效） | — |
 
 关键文件：
 
@@ -59,7 +60,7 @@ Agent.run(主任务)
 - `task` 工具注册 / 委托 / 缺 prompt / 无委托能力。
 - `without()` 只移除目标工具。
 - 子 agent 独立上下文（首轮不含主对话历史）+ 工具集不含 `task`。
-- 超步数 → `[未完成]`；空结果 → `[未产出]`。
+- 超步数 → `[未完成]`（异常消息里附带进度总结）；空结果 → `[未产出]`。
 - 危险命令仍走 `confirm`（权限沿用）。
 - 主循环集成：委托后主对话只有一条 tool 消息（结论），中间过程不进入。
 

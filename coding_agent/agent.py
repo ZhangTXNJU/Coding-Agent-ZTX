@@ -129,7 +129,30 @@ class Agent:
                 result = truncate_text(result, self.config.max_tool_result_chars)
                 self.conversation.add_tool(tc.id, result, name=tc.name)
 
-        raise MaxStepsExceeded(f"达到最大步数 {self.config.max_steps}，任务未完成")
+        # 超步数：先总结当前进展并写入历史，再抛异常（不丢失已完成的工作）
+        summary = self._summarize_progress()
+        raise MaxStepsExceeded(
+            f"达到最大步数 {self.config.max_steps}，任务未完成。当前进展：{summary}"
+        )
+
+    def _summarize_progress(self) -> str:
+        """超步数收尾：请求模型总结当前进展（强制文本回答），追加进历史并返回摘要。"""
+        self._compact_if_needed()
+        self.conversation.add_user(
+            "你已达到步数上限，必须停止调用工具。请用一段话总结当前进展："
+            "已完成什么、如何验证的、还剩什么未完成。"
+        )
+        try:
+            resp = self.client.chat(
+                self.conversation.to_openai(), tools=None, on_text=self.on_text
+            )
+            summary = (resp.content or "").strip()
+        except AgentError as exc:
+            summary = f"（总结失败：{exc}）"
+        if not summary:
+            summary = "（未能生成总结）"
+        self.conversation.add_assistant(summary)
+        return summary
 
     def _compact_if_needed(self) -> None:
         """上下文预算自动检查：超限时先裁剪超长工具结果，仍超限则折叠旧消息。"""
