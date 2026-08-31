@@ -14,7 +14,7 @@
 | `description` | 用途说明，让模型判断「何时适用」 |
 | `instructions` | 执行指引（正文），触发后注入上下文 |
 
-## 二、内置 skill（5 个常见场景）
+## 二、内置 skill（6 个）
 
 | 名称 | 用途 |
 |------|------|
@@ -23,6 +23,7 @@
 | `refactor` | 行为不变的等价重构，每步改动后验证 |
 | `write-docs` | 编写 README / docstring / API 文档 |
 | `explain-code` | 由整体到局部讲解代码 |
+| `create-skill` | 让 agent 自己创建/更新自定义 skill（写入 `~/.coding-agent/skills/`） |
 
 ## 三、自定义 skill
 

@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 # 约定目录：与 ~/.coding-agent/sessions/ 同级，存放用户自定义 skill
@@ -148,6 +148,29 @@ BUILTIN_SKILLS = [
             "   - 易错点 / 注意点\n"
             "3. 面向对象：默认假设读者已懂编程但没读过这份代码；如读者是初学者再降难度。\n"
             "4. 解释要具体到代码，避免空泛的套话。"
+        ),
+    ),
+    Skill(
+        name="create-skill",
+        description="创建或更新一个自定义 skill（把可复用流程固化成 skill 文件）",
+        instructions=(
+            "创建/更新一个自定义 skill，按以下流程执行：\n\n"
+            "1. 确定 skill 名称：小写字母/数字/连字符，最好用「动词-名词」格式（如 fix-tests、create-skill），"
+            "不能含空格或中文。\n"
+            "2. 写用途说明（description）：一句话说明这个 skill 做什么、何时用，"
+            "让 agent 在后续任务里能判断是否适用。\n"
+            "3. 写执行指引（正文）：列出具体步骤，可参考内置 skill 的写法——先了解现状 → 分步执行 → 每步验证 → 回报结果。\n"
+            "4. 把内容写成 markdown 文件，放到 ~/.coding-agent/skills/<name>.md，格式如下：\n\n"
+            "   ---\n"
+            "   name: <name>\n"
+            "   description: <用途说明>\n"
+            "   ---\n"
+            "   （执行指引正文）\n\n"
+            "5. 用 bash 确认文件已写入且格式正确：frontmatter 的 name/description 齐全、正文非空。\n"
+            "6. 回报：创建了哪个 skill、放在哪里、用途是什么；并提醒用户新 skill 在下次启动后生效。\n\n"
+            "注意：\n"
+            "- name 必须唯一；与内置 skill 重名会覆盖内置（按需决定）。\n"
+            "- 若用户想修改已有 skill，用 read_file 读取后 edit_file 更新对应文件。"
         ),
     ),
 ]

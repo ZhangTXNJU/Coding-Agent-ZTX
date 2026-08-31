@@ -45,6 +45,13 @@ def test_builtin_skills_cover_five_scenarios():
     assert len(BUILTIN_SKILLS) >= 5
 
 
+def test_builtin_create_skill_present():
+    skill = next(s for s in BUILTIN_SKILLS if s.name == "create-skill")
+    assert skill.description
+    # 指引须引导把 skill 写到约定目录
+    assert "~/.coding-agent/skills" in skill.instructions
+
+
 def test_builtin_skill_has_required_fields():
     for s in BUILTIN_SKILLS:
         assert s.name
