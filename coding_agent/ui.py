@@ -17,6 +17,30 @@ try:
 except ImportError:  # pragma: no cover - 极少数环境无 readline
     pass
 
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.application import get_app
+    from prompt_toolkit.formatted_text import FormattedText
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.styles import Style as PTStyle
+
+    _HAS_PROMPT_TOOLKIT = True
+except ImportError:  # pragma: no cover - 未安装 prompt_toolkit 时降级为 input()
+    _HAS_PROMPT_TOOLKIT = False
+
+
+if _HAS_PROMPT_TOOLKIT:
+
+    def _build_key_bindings() -> "KeyBindings":
+        kb = KeyBindings()
+
+        @kb.add("escape", "enter")  # Esc + Enter 换行（Enter 仍为提交）
+        def _(event):
+            event.current_buffer.insert_text("\n")
+
+        return kb
+
 # figlet 风格的 "CA" 单色 logo（配合下方渐变渲染）
 LOGO = (
     "   ___    _    \n"
@@ -41,6 +65,20 @@ class UI:
     def __init__(self, verbose: bool = False, console: Console | None = None) -> None:
         self.console = console or Console()
         self.verbose = verbose
+        # prompt_toolkit 输入会话：常驻 ❯ 提示符 + 上下横线（未安装时降级）
+        self._pt_session = None
+        if _HAS_PROMPT_TOOLKIT:
+            self._pt_session = PromptSession(
+                history=InMemoryHistory(),
+                style=PTStyle.from_dict(
+                    {
+                        "prompt": "bold #00d26a",
+                        "line": "#3f3f46",
+                        "hint": "#71717a",
+                    }
+                ),
+                key_bindings=_build_key_bindings(),
+            )
 
     # -- 渲染 --------------------------------------------------------------- #
 
@@ -115,7 +153,21 @@ class UI:
     # -- 交互 --------------------------------------------------------------- #
 
     def prompt(self) -> str:
+        """读取一行输入：常驻 ❯ 提示符 + 上下横线（prompt_toolkit）。"""
+        if self._pt_session is not None:
+            self.console.print("─" * (self.console.width or 80), style="dim")
+            return self._pt_session.prompt(
+                message=FormattedText([("class:prompt", "❯ ")]),
+                bottom_toolbar=self._bottom_toolbar,
+            )
         return self.console.input("[bold green]❯ [/]")
+
+    def _bottom_toolbar(self):
+        """输入框底部：横线 + 提示（由 prompt_toolkit 渲染，不受回删影响）。"""
+        width = get_app().output.get_size().columns
+        rule = ("class:line", "─" * width)
+        hint = ("class:hint", " Enter 提交 · Esc+Enter 换行 · /help · /exit ")
+        return [rule, ("", "\n"), hint]
 
     def confirm(self, command: str) -> bool:
         """危险命令确认：[y/N] 提示，仅显式同意才放行。"""
