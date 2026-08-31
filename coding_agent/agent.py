@@ -47,6 +47,8 @@ class Agent:
         conversation: Conversation,
         ctx: ToolContext,
         on_text: Callable[[str], None] | None = None,
+        on_tool_call: Callable[[str, dict], None] | None = None,
+        on_tool_result: Callable[[str, str], None] | None = None,
         verbose: bool = False,
     ) -> None:
         self.config = config
@@ -55,6 +57,8 @@ class Agent:
         self.conversation = conversation
         self.ctx = ctx
         self.on_text = on_text
+        self.on_tool_call = on_tool_call
+        self.on_tool_result = on_tool_result
         self.verbose = verbose
 
     def run(self, task: str) -> str:
@@ -100,18 +104,28 @@ class Agent:
         try:
             args = parse_tool_arguments(tc.arguments)
         except ParsingError as exc:
-            return f"错误：{exc}", False
+            if self.on_tool_call is not None:
+                self.on_tool_call(tc.name, {})
+            result = f"错误：{exc}"
+            if self.on_tool_result is not None:
+                self.on_tool_result(tc.name, result)
+            return result, False
 
         if self.verbose:
             print(f"→ 调用工具 {tc.name}({args})", file=sys.stderr)
+        if self.on_tool_call is not None:
+            self.on_tool_call(tc.name, args)
 
+        ok = True
         try:
             result = self.registry.run(tc.name, args, self.ctx)
         except ToolError as exc:
-            return f"错误：{exc}", False
+            result, ok = f"错误：{exc}", False
         except Exception as exc:  # 兜底，任何异常都回传而非崩溃
-            return f"错误：{exc}", False
+            result, ok = f"错误：{exc}", False
 
         if self.verbose:
             print(f"← 结果：{result[:200]}", file=sys.stderr)
-        return result, True
+        if self.on_tool_result is not None:
+            self.on_tool_result(tc.name, result)
+        return result, ok

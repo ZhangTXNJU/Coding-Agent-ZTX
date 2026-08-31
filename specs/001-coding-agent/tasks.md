@@ -120,9 +120,9 @@
 
 ### Implementation
 
-- [ ] T024 [US6] 实现 `coding_agent/ui.py`：`rich` 流式渲染、工具调用面板、彩色 unified diff、危险命令 `[y/N]` 确认
-- [ ] T025 [US6] 实现 `coding_agent/session.py`：会话 JSONL 持久化 + `--continue` 续跑（`~/.coding-agent/sessions/*.jsonl`）
-- [ ] T026 [US6] 完善 `coding_agent/cli.py`：交互式 REPL + 参数 `--model/--cwd/--max-steps/--auto-approve/--continue/--session/--verbose`
+- [x] T024 [US6] 实现 `coding_agent/ui.py`：`rich` 流式渲染、工具调用面板、ASCII logo、危险命令 `[y/N]` 确认
+- [x] T025 [US6] 实现 `coding_agent/session.py`：会话 JSONL 持久化 + `--continue` 续跑（`~/.coding-agent/sessions/*.jsonl`）
+- [x] T026 [US6] 完善 `coding_agent/cli.py`：交互式 REPL + 参数 `--model/--cwd/--max-steps/--auto-approve/--continue/--session/--verbose`
 
 **Checkpoint**: 演示体验完整（FR-014/FR-016/FR-017/FR-018）
 

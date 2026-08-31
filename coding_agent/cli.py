@@ -1,4 +1,8 @@
-"""命令行入口。"""
+"""命令行入口：单次任务 + 交互式 REPL。
+
+- 传任务（`python -m coding_agent "任务"`）：跑一轮后退出（等价 `claude -p`）。
+- 不传任务且在交互终端：进入 REPL，持续对话并持久化会话。
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,7 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="coding-agent",
         description="自研编程智能体：自然语言下达任务，agent 自主读写文件、执行命令。",
     )
-    p.add_argument("task", nargs="?", help="自然语言编程任务（缺省进入交互式 REPL，后续阶段实现）")
+    p.add_argument("task", nargs="?", help="自然语言编程任务（缺省进入交互式 REPL）")
     p.add_argument("--provider", help="模型提供商（deepseek/qwen/glm/kimi/minimax）")
     p.add_argument("--model", help="模型名")
     p.add_argument("--base-url", help="OpenAI 兼容端点")
@@ -50,20 +54,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    if not args.task:
-        print("交互式 REPL 尚未实现（后续阶段）。当前请传入任务，例如：")
-        print('  python -m coding_agent "你好"')
-        return 0
-
     return _run(config, args)
 
 
-def _run(config: AgentConfig, args) -> int:
-    from .agent import SYSTEM_PROMPT, Agent  # 延迟导入，避免 --help 依赖 openai
+def _build(config: AgentConfig, args):
+    """组装 UI / client / registry / agent，注入流式渲染与确认回调。"""
+    from .agent import SYSTEM_PROMPT, Agent
     from .llm.client import LLMClient
     from .messages import Conversation
     from .tools import ToolContext, build_default_registry
+    from .ui import UI
 
+    ui = UI(verbose=args.verbose)
     client = LLMClient(config)
     registry = build_default_registry()
     ctx = ToolContext(
@@ -71,23 +73,118 @@ def _run(config: AgentConfig, args) -> int:
         command_timeout=config.command_timeout,
         auto_approve=config.auto_approve,
     )
-    conversation = Conversation(system_prompt=SYSTEM_PROMPT)
     agent = Agent(
         config,
         client,
         registry,
-        conversation,
+        Conversation(system_prompt=SYSTEM_PROMPT),
         ctx,
-        on_text=lambda t: sys.stdout.write(t),
+        on_text=ui.stream_text,
+        on_tool_call=ui.tool_call,
+        on_tool_result=ui.tool_result,
         verbose=args.verbose,
     )
-    try:
-        agent.run(args.task)
-    except AgentError as exc:
-        print(f"\n{exc}", file=sys.stderr)
-        return 1
-    sys.stdout.write("\n")
+    ctx.confirm = ui.confirm  # 危险命令 → 交互式 [y/N] 确认
+    return ui, agent
+
+
+def _run(config: AgentConfig, args) -> int:
+    from .session import latest_session_id, load_session, save_session
+
+    ui, agent = _build(config, args)
+
+    # 会话恢复
+    session_id: str | None = None
+    if args.resume or args.session:
+        session_id = args.session or latest_session_id()
+        if session_id is None:
+            ui.error("没有可续跑的会话（~/.coding-agent/sessions/ 为空）。")
+            return 1
+        try:
+            agent.conversation = load_session(session_id)
+        except AgentError as exc:
+            ui.error(str(exc))
+            return 1
+        ui.info(f"已恢复会话 {session_id}")
+
+    # 单次任务：跑一轮后退出（不落盘会话）
+    if args.task:
+        try:
+            agent.run(args.task)
+        except AgentError as exc:
+            ui.error(str(exc))
+            return 1
+        ui.console.print()
+        return 0
+
+    # 无任务：交互终端进入 REPL，非交互终端打印用法提示
+    if not sys.stdin.isatty():
+        ui.error("未提供任务，且当前不是交互终端。")
+        ui.info('用法：python -m coding_agent "你的任务"')
+        return 0
+
+    return _repl(ui, agent, config, session_id, save_session)
+
+
+def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_session) -> int:
+    from .agent import SYSTEM_PROMPT
+    from .messages import Conversation
+
+    ui.logo(config.provider, config.resolved_model, str(config.workdir))
+    ui.info("输入自然语言任务，Enter 提交；/help 查看命令，/exit 退出。")
+    ui.console.print()
+
+    while True:
+        try:
+            line = ui.prompt()
+        except (EOFError, KeyboardInterrupt):
+            ui.console.print()
+            break
+
+        line = line.strip()
+        if not line:
+            continue
+        if line in ("/exit", "/quit", "exit", "quit"):
+            ui.info("再见 👋")
+            break
+        if line in ("/help", "help"):
+            ui.help()
+            continue
+        if line in ("/clear", "clear"):
+            agent.conversation = Conversation(system_prompt=SYSTEM_PROMPT)
+            ui.info("对话上下文已清空。")
+            continue
+        if line == "/session":
+            ui.info(f"当前会话：{session_id or '（尚未保存）'}")
+            continue
+        if line.startswith("/"):
+            ui.error(f"未知命令：{line}（输入 /help 查看）")
+            continue
+
+        try:
+            agent.run(line)
+        except AgentError as exc:
+            ui.error(str(exc))
+        ui.console.print()
+        session_id = _save(ui, agent, config, session_id, save_session)
+
     return 0
+
+
+def _save(ui, agent, config: AgentConfig, session_id: str | None, save_session) -> str | None:
+    try:
+        session_id = save_session(
+            agent.conversation,
+            provider=config.provider,
+            model=config.resolved_model,
+            workdir=str(config.workdir),
+            session_id=session_id,
+        )
+        ui.info(f"会话已保存：{session_id}")
+        return session_id
+    except AgentError as exc:
+        ui.error(f"会话保存失败：{exc}")
+        return session_id
 
 
 if __name__ == "__main__":
