@@ -158,16 +158,15 @@ class UI:
             self.console.print("─" * (self.console.width or 80), style="dim")
             return self._pt_session.prompt(
                 message=FormattedText([("class:prompt", "❯ ")]),
+                rprompt=FormattedText([("class:hint", " /help · /exit ")]),
                 bottom_toolbar=self._bottom_toolbar,
             )
         return self.console.input("[bold green]❯ [/]")
 
     def _bottom_toolbar(self):
-        """输入框底部：横线 + 提示（由 prompt_toolkit 渲染，不受回删影响）。"""
+        """输入框底部：单条横线（薄边框，不受回删影响）。"""
         width = get_app().output.get_size().columns
-        rule = ("class:line", "─" * width)
-        hint = ("class:hint", " Enter 提交 · Esc+Enter 换行 · /help · /exit ")
-        return [rule, ("", "\n"), hint]
+        return [("class:line", "─" * width)]
 
     def confirm(self, command: str) -> bool:
         """危险命令确认：[y/N] 提示，仅显式同意才放行。"""
