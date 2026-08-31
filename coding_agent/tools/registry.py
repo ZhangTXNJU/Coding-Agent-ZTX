@@ -25,6 +25,8 @@ class ToolContext:
     todos: list = field(default_factory=list)
     # use_skill 的 skill 来源（内置 + 自定义）。
     skills: SkillRegistry = field(default_factory=SkillRegistry)
+    # 子 agent 委托回调（由 agent 主循环注入）：接收自包含 prompt，返回子 agent 最终结论。
+    spawn_subagent: Callable[[str], str] | None = None
 
 
 @dataclass
@@ -73,6 +75,14 @@ class ToolRegistry:
 
     def to_openai_tools(self) -> list[dict]:
         return [t.to_openai() for t in self._tools.values()]
+
+    def without(self, name: str) -> "ToolRegistry":
+        """返回去掉指定工具的副本（用于子 agent 禁嵌套）。"""
+        reg = ToolRegistry()
+        for n, tool in self._tools.items():
+            if n != name:
+                reg.register(tool)
+        return reg
 
     def run(self, name: str, arguments: dict, ctx: ToolContext) -> str:
         """执行工具并返回结果文本；执行错误统一包装为 ToolError。"""
