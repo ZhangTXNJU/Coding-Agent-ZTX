@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Reference material — teaching project, not part of this repo
+learn-claude-code/
+opencode/
+
+# Assignment question paper (not part of the deliverable)
+推免考核题目学生版.pdf
+
+# Secrets — credentials must never be committed (requirement.md rule)
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
