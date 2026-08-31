@@ -5,7 +5,7 @@ import pytest
 
 from coding_agent.errors import AgentError
 from coding_agent.messages import Conversation
-from coding_agent.session import latest_session_id, load_session, save_session
+from coding_agent.session import latest_session_id, list_sessions, load_session, save_session
 
 
 @pytest.fixture
@@ -53,3 +53,17 @@ def test_latest_session(_tmp_sessions):
     assert latest_session_id() is None
     save_session(Conversation())
     assert latest_session_id() is not None
+
+
+def test_title_and_count(_tmp_sessions):
+    conv = Conversation()
+    conv.add_user("帮我给 CLI 加一个 --dry-run 参数并补测试")
+    save_session(conv)
+    meta = list_sessions()[0]
+    assert meta.title.startswith("帮我给 CLI 加一个")
+    assert meta.message_count == 1
+
+
+def test_title_fallback(_tmp_sessions):
+    save_session(Conversation())  # 无用户消息
+    assert list_sessions()[0].title == "（无标题）"

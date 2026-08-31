@@ -107,7 +107,7 @@ def _run(config: AgentConfig, args) -> int:
             return 1
         ui.info(f"已恢复会话 {session_id}")
 
-    # 单次任务：跑一轮后退出（不落盘会话）
+    # 单次任务：跑一轮后保存会话并退出
     if args.task:
         try:
             agent.run(args.task)
@@ -115,6 +115,7 @@ def _run(config: AgentConfig, args) -> int:
             ui.error(str(exc))
             return 1
         ui.console.print()
+        _save(ui, agent, config, session_id, save_session)
         return 0
 
     # 无任务：交互终端进入 REPL，非交互终端打印用法提示
@@ -129,6 +130,7 @@ def _run(config: AgentConfig, args) -> int:
 def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_session) -> int:
     from .agent import SYSTEM_PROMPT
     from .messages import Conversation
+    from .session import load_session
 
     ui.logo(config.provider, config.resolved_model, str(config.workdir))
     ui.info("输入自然语言任务，Enter 提交；/help 查看命令，/exit 退出。")
@@ -150,9 +152,24 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
         if line in ("/help", "help"):
             ui.help()
             continue
+        if line in ("/sessions", "/history", "/list"):
+            _list_sessions(ui)
+            continue
+        if line.startswith("/continue"):
+            target = line[len("/continue"):].strip() or None
+            new_sid = _resolve_session(ui, target)
+            if new_sid:
+                try:
+                    agent.conversation = load_session(new_sid)
+                    session_id = new_sid
+                    ui.info(f"已切换到会话 {new_sid}")
+                except AgentError as exc:
+                    ui.error(str(exc))
+            continue
         if line in ("/clear", "clear"):
             agent.conversation = Conversation(system_prompt=SYSTEM_PROMPT)
-            ui.info("对话上下文已清空。")
+            session_id = None
+            ui.info("对话上下文已清空（下次保存将作为新会话）。")
             continue
         if line == "/session":
             ui.info(f"当前会话：{session_id or '（尚未保存）'}")
@@ -185,6 +202,34 @@ def _save(ui, agent, config: AgentConfig, session_id: str | None, save_session) 
     except AgentError as exc:
         ui.error(f"会话保存失败：{exc}")
         return session_id
+
+
+def _list_sessions(ui) -> None:
+    """列出全部会话历史（最新在前）。"""
+    from .session import list_sessions
+
+    ui.render_sessions(list(reversed(list_sessions())))
+
+
+def _resolve_session(ui, target: str | None) -> str | None:
+    """把 /continue 参数解析为会话 ID：缺省=最新；支持 ID 前缀或序号。"""
+    from .session import list_sessions
+
+    sessions = list(reversed(list_sessions()))  # 最新在前
+    if not sessions:
+        ui.error("暂无会话历史。")
+        return None
+    if target is None:
+        return sessions[0].id
+    for s in sessions:
+        if s.id == target or s.id.startswith(target):
+            return s.id
+    if target.isdigit():
+        idx = int(target)
+        if 1 <= idx <= len(sessions):
+            return sessions[idx - 1].id
+    ui.error(f"未找到会话：{target}（用 /sessions 查看列表）")
+    return None
 
 
 if __name__ == "__main__":

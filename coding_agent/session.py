@@ -30,6 +30,17 @@ class SessionMeta:
     provider: str = ""
     model: str = ""
     workdir: str = ""
+    title: str = ""
+    message_count: int = 0
+
+
+def _make_title(conversation: Conversation, max_len: int = 40) -> str:
+    """用第一条用户消息作为会话标题（单行、截断）。"""
+    for m in conversation.messages:
+        if m.role == "user" and m.content.strip():
+            text = " ".join(m.content.strip().split())
+            return text[:max_len] + ("…" if len(text) > max_len else "")
+    return "（无标题）"
 
 
 def save_session(
@@ -48,6 +59,8 @@ def save_session(
         provider=provider,
         model=model,
         workdir=workdir,
+        title=_make_title(conversation),
+        message_count=len(conversation.messages),
     )
     lines = [json.dumps({"type": "meta", **asdict(meta)}, ensure_ascii=False)]
     if conversation.system_prompt:
@@ -133,6 +146,8 @@ def list_sessions() -> list[SessionMeta]:
                 provider=first.get("provider", ""),
                 model=first.get("model", ""),
                 workdir=first.get("workdir", ""),
+                title=first.get("title", ""),
+                message_count=first.get("message_count", 0),
             )
         )
     out.sort(key=lambda s: s.created_at)
