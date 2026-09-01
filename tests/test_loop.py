@@ -269,5 +269,23 @@ def test_read_only_skill_exposes_only_read_tools_to_model(tmp_path):
     skill = Skill("specify", "写规格", "只读。", "builtin", read_only=True)
     agent.run("规格", skill=skill)
     exposed = {t["function"]["name"] for t in client.last_tools}
-    assert exposed == {"read_file", "list_dir", "glob", "grep", "todo_write"}
+    assert exposed == {"read_file", "list_dir", "glob", "grep", "todo_write", "ask_user"}
     assert "write_file" not in exposed and "bash" not in exposed
+
+
+def test_ask_user_feeds_answer_back_to_model(tmp_path):
+    from coding_agent.tools.ask_user import format_ask_user_result
+
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "ask_user", '{"questions": [{"question": "选哪个库", "header": "库", "options": [{"label": "PostgreSQL"}, {"label": "MySQL"}]}]}')]),
+        resp(content="用 PostgreSQL", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    agent.ctx.ask_user = lambda qs: format_ask_user_result([(qs[0], "PostgreSQL")])
+
+    result = agent.run("加个数据库层")
+
+    assert result == "用 PostgreSQL"
+    # 用户回答作为 tool 结果回传给了模型
+    tool_msg = next(m for m in agent.conversation.messages if m.role == "tool")
+    assert "PostgreSQL" in tool_msg.content

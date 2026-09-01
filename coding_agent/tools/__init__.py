@@ -1,6 +1,7 @@
 """工具集：读写文件、搜索、命令执行、任务清单。"""
 from __future__ import annotations
 
+from .ask_user import ASK_USER
 from .bash import BASH
 from .files import APPLY_PATCH, EDIT_FILE, READ_FILE, WRITE_FILE
 from .registry import Tool, ToolContext, ToolRegistry
@@ -9,7 +10,7 @@ from .skill import USE_SKILL
 from .task import TASK
 from .todo import TODO_WRITE
 
-_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, TODO_WRITE, USE_SKILL, TASK)
+_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, TODO_WRITE, ASK_USER, USE_SKILL, TASK)
 
 
 def build_default_registry() -> ToolRegistry:
@@ -34,6 +35,7 @@ __all__ = [
     "GREP",
     "BASH",
     "TODO_WRITE",
+    "ASK_USER",
     "USE_SKILL",
     "TASK",
 ]
