@@ -18,6 +18,7 @@ from .messages import Conversation, Message, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
 from .skills import Skill, SkillRegistry, build_skills_prompt, skill_prompt
 from .tools import ToolContext, ToolRegistry
+from .tools.todo import todos_to_text
 
 SYSTEM_PROMPT = (
     "你是一个本地编程智能体（coding agent），在用户的工作目录里自主完成任务。\n"
@@ -96,6 +97,8 @@ class Agent:
         self.verbose = verbose
         # 供 REPL /clear 复用（含 skill 列表的完整系统提示）
         self.system_prompt = conversation.system_prompt
+        # todos 归属统一到 conversation：todo_write 写 ctx.todos，注入/持久化读 conversation.todos
+        self.ctx.todos = self.conversation.todos
         # 把子 agent 委托能力注入工具上下文（task 工具据此递归跑一个子 Agent）
         ctx.spawn_subagent = self._spawn_subagent
 
@@ -123,7 +126,7 @@ class Agent:
         for _step in range(self.config.max_steps):
             self._compact_if_needed()
             resp = self.client.chat(
-                self.conversation.to_openai(),
+                self._messages_with_todos(),
                 tools=self.registry.to_openai_tools(),
                 on_text=self.on_text,
             )
@@ -177,6 +180,28 @@ class Agent:
             summary = "（未能生成总结）"
         self.conversation.add_assistant(summary)
         return summary
+
+    def _messages_with_todos(self) -> list[dict]:
+        """构建发给模型的完整消息：在 system 消息里注入当前任务清单。
+
+        todo 状态每轮重新渲染（读 conversation.todos），且独立于 messages 历史，
+        因此不会被 compact() 折叠丢失——对照 Claude Code 的持续注入方案。
+        """
+        msgs = self.conversation.to_openai()
+        block = todos_to_text(self.conversation.todos)
+        if not block:
+            return msgs
+        if msgs and msgs[0]["role"] == "system":
+            msgs[0] = dict(msgs[0], content=msgs[0]["content"] + "\n\n" + block)
+        else:
+            msgs.insert(0, {"role": "system", "content": block})
+        return msgs
+
+    def replace_conversation(self, conv: Conversation) -> None:
+        """替换对话（/clear、/continue 时用），并同步 todos 与系统提示引用。"""
+        self.conversation = conv
+        self.system_prompt = conv.system_prompt
+        self.ctx.todos = conv.todos
 
     def _compact_if_needed(self) -> None:
         """上下文预算自动检查：超限时先裁剪超长工具结果，仍超限则折叠旧消息。"""

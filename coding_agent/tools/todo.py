@@ -6,17 +6,25 @@ from .registry import Tool, ToolContext
 _MARK = {"pending": " ", "in_progress": "→", "completed": "x"}
 
 
-def todo_write(args: dict, ctx: ToolContext) -> str:
-    todos = args["todos"]
-    ctx.todos[:] = todos  # 替换为最新清单，状态随会话持久
+def todos_to_text(todos: list) -> str:
+    """把 todo 清单渲染成给 LLM 看的纯文本块；空清单返回空串。
+
+    供 todo_write 的返回值与每轮上下文注入共用，保证格式一致。
+    """
     if not todos:
-        return "任务清单为空"
-    lines = []
+        return ""
+    lines = ["当前任务清单（todo）："]
     for t in todos:
         status = t.get("status", "pending")
         mark = _MARK.get(status, " ")
         lines.append(f"- [{mark}] #{t.get('id')} {t.get('content', '')}")
     return "\n".join(lines)
+
+
+def todo_write(args: dict, ctx: ToolContext) -> str:
+    todos = args["todos"]
+    ctx.todos[:] = todos  # 替换为最新清单，状态随会话持久
+    return todos_to_text(todos) or "任务清单为空"
 
 
 TODO_WRITE = Tool(

@@ -67,3 +67,17 @@ def test_title_and_count(_tmp_sessions):
 def test_title_fallback(_tmp_sessions):
     save_session(Conversation())  # 无用户消息
     assert list_sessions()[0].title == "（无标题）"
+
+
+def test_todos_roundtrip(_tmp_sessions):
+    conv = Conversation(system_prompt="s")
+    conv.add_user("开始")
+    conv.todos[:] = [{"id": 1, "content": "写代码", "status": "in_progress"}]
+    sid = save_session(conv)
+    loaded = load_session(sid)
+    assert loaded.todos == [{"id": 1, "content": "写代码", "status": "in_progress"}]
+
+
+def test_todos_absent_defaults_empty(_tmp_sessions):
+    save_session(Conversation())
+    assert load_session(latest_session_id()).todos == []

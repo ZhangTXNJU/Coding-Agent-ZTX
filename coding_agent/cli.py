@@ -112,7 +112,7 @@ def _run(config: AgentConfig, args) -> int:
             ui.error("没有可续跑的会话（~/.coding-agent/sessions/ 为空）。")
             return 1
         try:
-            agent.conversation = load_session(session_id)
+            agent.replace_conversation(load_session(session_id))
         except AgentError as exc:
             ui.error(str(exc))
             return 1
@@ -189,14 +189,14 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
             new_sid = _resolve_session(ui, target)
             if new_sid:
                 try:
-                    agent.conversation = load_session(new_sid)
+                    agent.replace_conversation(load_session(new_sid))
                     session_id = new_sid
                     ui.info(f"已切换到会话 {new_sid}")
                 except AgentError as exc:
                     ui.error(str(exc))
             continue
         if line in ("/clear", "clear"):
-            agent.conversation = Conversation(system_prompt=agent.system_prompt)
+            agent.replace_conversation(Conversation(system_prompt=agent.system_prompt))
             session_id = None
             ui.info("对话上下文已清空（下次保存将作为新会话）。")
             continue

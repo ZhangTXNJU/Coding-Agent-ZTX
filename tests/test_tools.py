@@ -229,6 +229,19 @@ def test_todo_write_updates_context(ctx):
     assert ctx.todos[0]["status"] == "in_progress"
 
 
+def test_todos_to_text_renders_and_empty():
+    from coding_agent.tools.todo import todos_to_text
+
+    assert todos_to_text([]) == ""
+    text = todos_to_text([
+        {"id": 1, "content": "写代码", "status": "in_progress"},
+        {"id": 2, "content": "跑测试", "status": "completed"},
+    ])
+    assert "当前任务清单" in text
+    assert "- [→] #1 写代码" in text
+    assert "- [x] #2 跑测试" in text
+
+
 # --------------------------------------------------------------------------- #
 # registry
 # --------------------------------------------------------------------------- #

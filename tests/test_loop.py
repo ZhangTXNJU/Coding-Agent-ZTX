@@ -201,3 +201,35 @@ def test_run_with_skill_injects_and_restores_system_prompt(tmp_path):
     assert "第一步：审查代码。" in client.calls[0][0]["content"]
     # run 结束后系统提示恢复，不污染后续对话
     assert agent.conversation.system_prompt == original
+
+
+def test_todos_injected_into_system_each_turn(tmp_path):
+    client = ScriptedClient([resp(content="完成", tool_calls=None, finish_reason="stop")])
+    agent = make_agent(tmp_path, client)
+    agent.conversation.todos[:] = [{"id": 1, "content": "写代码", "status": "in_progress"}]
+    agent.run("继续")
+    system_msg = client.calls[0][0]
+    assert system_msg["role"] == "system"
+    assert "当前任务清单" in system_msg["content"]
+    assert "写代码" in system_msg["content"]
+
+
+def test_todos_not_lost_by_compaction(tmp_path):
+    agent = make_agent(tmp_path, ScriptedClient([]))
+    agent.conversation.todos[:] = [{"id": 1, "content": "写代码", "status": "in_progress"}]
+    for i in range(40):
+        agent.conversation.add_user(f"历史 {i} " + "x" * 80)
+    agent.conversation.compact(lambda msgs: "早期历史摘要")  # 折叠旧消息
+    assert len(agent.conversation.messages) < 40  # 确实发生压缩
+    # 压缩后 todo 仍被注入（独立于 messages 历史，不随折叠丢失）
+    assert "写代码" in agent._messages_with_todos()[0]["content"]
+
+
+def test_replace_conversation_syncs_todos(tmp_path):
+    agent = make_agent(tmp_path, ScriptedClient([]))
+    new_conv = Conversation(system_prompt="new")
+    new_conv.todos[:] = [{"id": 1, "content": "跑测试", "status": "pending"}]
+    agent.replace_conversation(new_conv)
+    assert agent.system_prompt == "new"
+    assert agent.ctx.todos == new_conv.todos
+    assert agent.conversation is new_conv

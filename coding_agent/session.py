@@ -71,6 +71,10 @@ def save_session(
         lines.append(
             json.dumps({"type": "summary", "content": conversation.summary}, ensure_ascii=False)
         )
+    if conversation.todos:
+        lines.append(
+            json.dumps({"type": "todos", "todos": conversation.todos}, ensure_ascii=False)
+        )
     for m in conversation.messages:
         lines.append(
             json.dumps(
@@ -116,6 +120,8 @@ def load_session(session_id: str) -> Conversation:
             conv.system_prompt = obj.get("content", "")
         elif kind == "summary":
             conv.summary = obj.get("content", "")
+        elif kind == "todos":
+            conv.todos = obj.get("todos", [])
         elif kind == "message":
             conv.messages.append(
                 Message(
