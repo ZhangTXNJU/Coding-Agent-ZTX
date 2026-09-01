@@ -52,31 +52,35 @@ if _HAS_PROMPT_TOOLKIT:
         return text.lstrip().startswith("/")
 
     class _SlashCompleter(Completer):
-        """斜杠命令补全：输入 / 列出内置命令；/skill 后列出 skill 名及用途。"""
+        """斜杠命令补全：输入 / 列出内置命令 + 全部 skill（模糊匹配，含用途说明）。"""
 
         def __init__(self, commands, skills_getter):
-            self._commands = commands
+            self._commands = commands  # [(name, description)]，name 已带 / 前缀
             self._skills_getter = skills_getter
 
         def get_completions(self, document, complete_event):
             text = document.text_before_cursor.lstrip()
             if not text.startswith("/"):
                 return
-            # /skill <partial> → 补全 skill 名（display_meta 展示用途说明）
-            if text.startswith("/skill "):
-                rest = text[len("/skill "):]
-                for skill in self._skills_getter():
-                    if skill.name.startswith(rest):
-                        yield Completion(
-                            skill.name,
-                            start_position=-len(rest),
-                            display_meta=skill.description,
-                        )
-                return
-            # 否则补全内置命令
-            for name, desc in self._commands:
-                if name.startswith(text):
-                    yield Completion(name, start_position=-len(text), display_meta=desc)
+            query = text[1:]  # 去掉斜杠后的查询串
+
+            # 候选：内置命令 + 全部 skill（统一成「去斜杠的名字 + 用途」）
+            candidates = [(name.lstrip("/"), desc) for name, desc in self._commands]
+            candidates += [
+                (skill.name, skill.description) for skill in self._skills_getter()
+            ]
+
+            scored = []
+            for name, desc in candidates:
+                score = _fuzzy_score(query, name)
+                if score is not None:
+                    scored.append((score, name, desc))
+            scored.sort(key=lambda item: (-item[0], item[1]))
+
+            for _score, name, desc in scored:
+                yield Completion(
+                    "/" + name, start_position=-len(text), display_meta=desc
+                )
 
 # figlet 风格的 "CA" 单色 logo（配合下方渐变渲染）
 LOGO = (
@@ -107,6 +111,32 @@ _SLASH_COMMANDS = [
     ("/session", "显示当前会话 ID"),
     ("/exit", "退出"),
 ]
+
+
+def _is_subsequence(q: str, t: str) -> bool:
+    """q 的字符是否按顺序出现在 t 中（模糊匹配的子序列判定）。"""
+    idx = 0
+    for ch in t:
+        if idx < len(q) and ch == q[idx]:
+            idx += 1
+    return idx == len(q)
+
+
+def _fuzzy_score(query: str, target: str) -> int | None:
+    """模糊匹配打分：精确 > 前缀 > 子串 > 子序列；不匹配返回 None。分值越大越靠前。"""
+    q = query.lower()
+    t = target.lower()
+    if not q:
+        return 3  # 仅输入 / → 全部列出
+    if t == q:
+        return 4
+    if t.startswith(q):
+        return 3
+    if q in t:
+        return 2
+    if _is_subsequence(q, t):
+        return 1
+    return None
 
 
 class UI:
@@ -296,7 +326,8 @@ class UI:
             "  [cyan]/continue[/]    续接会话（/continue <ID或序号>，缺省为最新）\n"
             "  [cyan]/clear[/]       清空当前对话上下文\n"
             "  [cyan]/exit[/]        退出（或输入 exit / quit）\n"
-            "  [dim]输入 / 弹出命令与 skill 补全菜单（含 skill 用途说明）[/]\n"
+            "  [cyan]/<skill名>[/]    直接调用 skill（可追加自然语言，如 /code-review 检查 src/）\n"
+            "  [dim]输入 / 弹出命令与 skill 补全菜单（模糊匹配 + 用途说明，Tab 补全）[/]\n"
             "  [dim]直接输入自然语言任务 → 交给 agent 执行（匹配 skill 时自动调用）[/]"
         )
 

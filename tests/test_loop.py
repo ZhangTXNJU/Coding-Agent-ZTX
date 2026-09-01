@@ -184,3 +184,20 @@ def test_llm_summarize_falls_back_on_empty(tmp_path):
     agent = make_agent(tmp_path, client)
     msgs = [Message("user", "hello")]
     assert agent._llm_summarize(msgs) == messages_to_text(msgs)
+
+
+def test_run_with_skill_injects_and_restores_system_prompt(tmp_path):
+    from coding_agent.skills import Skill
+
+    client = ScriptedClient([resp(content="完成", tool_calls=None, finish_reason="stop")])
+    agent = make_agent(tmp_path, client)
+    original = agent.conversation.system_prompt
+
+    skill = Skill("code-review", "审查代码质量", "第一步：审查代码。", "builtin")
+    result = agent.run("请审查", skill=skill)
+
+    assert result == "完成"
+    # 第一次调用的 system 消息应包含注入的 skill 指引
+    assert "第一步：审查代码。" in client.calls[0][0]["content"]
+    # run 结束后系统提示恢复，不污染后续对话
+    assert agent.conversation.system_prompt == original

@@ -168,6 +168,19 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
         if line == "/skills":
             _list_skills(ui, agent)
             continue
+        # /skill-name → 直接调用 skill（Claude Code 风格斜杠命令，可追加自然语言提示）
+        invocation = _resolve_skill_invocation(line, agent.ctx.skills)
+        if invocation is not None:
+            skill, rest = invocation
+            ui.info(f"调用 skill：{skill.name} · {skill.description}")
+            task = rest or f"请执行 {skill.name} 这个 skill"
+            try:
+                agent.run(task, skill=skill)
+            except AgentError as exc:
+                ui.error(str(exc))
+            ui.console.print()
+            session_id = _save(ui, agent, config, session_id, save_session)
+            continue
         if line.startswith("/skill"):
             _show_skill(ui, agent, line[len("/skill"):].strip())
             continue
@@ -246,6 +259,25 @@ def _resolve_session(ui, target: str | None) -> str | None:
             return sessions[idx - 1].id
     ui.error(f"未找到会话：{target}（用 /sessions 查看列表）")
     return None
+
+
+def _resolve_skill_invocation(line: str, skills):
+    """把 `/skill-name [附加提示]` 解析为 (skill, 附加提示)；非 skill 调用返回 None。
+
+    规则：去掉 / 后的第一个空白分隔 token 若命中某个已注册 skill 名，即为 skill 调用，
+    其余文本作为附加提示；否则返回 None，交由内置命令处理。
+    """
+    if not line.startswith("/"):
+        return None
+    body = line[1:]
+    token = body.split(None, 1)[0] if body.strip() else ""
+    if not token:
+        return None
+    skill = skills.get(token)
+    if skill is None:
+        return None
+    rest = body[len(token):].strip()
+    return skill, rest
 
 
 def _list_skills(ui, agent) -> None:

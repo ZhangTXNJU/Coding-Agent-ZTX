@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from ..errors import ToolError
+from ..skills import skill_prompt
 from .registry import Tool, ToolContext
 
 
@@ -15,7 +16,7 @@ def use_skill(args: dict, ctx: ToolContext) -> str:
     if skill is None:
         available = "、".join(ctx.skills.names()) or "（无）"
         raise ToolError(f"skill 不存在：{name!r}。可用 skill：{available}")
-    return f"【skill: {skill.name}】{skill.description}\n\n{skill.instructions}"
+    return skill_prompt(skill)
 
 
 USE_SKILL = Tool(

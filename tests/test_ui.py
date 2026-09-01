@@ -92,23 +92,43 @@ def _plain(fmt) -> str:
 
 
 def test_slash_completer_lists_skills_with_descriptions():
+    # 输入 / 即列出全部 skill（不再需要 /skill 前缀）
     ui = UI()
     ui.bind_skills([
         Skill("code-review", "审查代码质量", "指引", "builtin"),
         Skill("create-skill", "创建新 skill", "指引", "builtin"),
     ])
-    comps = _completions(ui, "/skill ")
+    comps = _completions(ui, "/")
     by_name = {c.text: c.display_meta for c in comps}
-    assert "code-review" in by_name
-    assert _plain(by_name["code-review"]) == "审查代码质量"
-    assert "create-skill" in by_name
+    assert "/code-review" in by_name
+    assert _plain(by_name["/code-review"]) == "审查代码质量"
+    assert "/create-skill" in by_name
 
 
-def test_slash_completer_prefix_filter():
+def test_slash_completer_prefix_match():
     ui = UI()
     ui.bind_skills([Skill("create-skill", "创建新 skill", "指引", "builtin")])
-    comps = _completions(ui, "/skill cre")
-    assert [c.text for c in comps] == ["create-skill"]
+    comps = _completions(ui, "/create")
+    assert [c.text for c in comps] == ["/create-skill"]
+
+
+def test_slash_completer_fuzzy_match():
+    # 子序列模糊匹配：/cr 命中 code-review（c…r）
+    ui = UI()
+    ui.bind_skills([Skill("code-review", "审查代码质量", "指引", "builtin")])
+    names = {c.text for c in _completions(ui, "/cr")}
+    assert "/code-review" in names
+
+
+def test_slash_completer_sorts_prefix_before_subsequence():
+    # 前缀命中应排在子序列命中之前
+    ui = UI()
+    ui.bind_skills([
+        Skill("create-skill", "创建新 skill", "指引", "builtin"),
+        Skill("code-review", "审查代码质量", "指引", "builtin"),
+    ])
+    comps = _completions(ui, "/cre")
+    assert comps[0].text == "/create-skill"  # 前缀优先于 code-review 的子序列 c…r…e
 
 
 def test_slash_completer_no_menu_for_plain_text():

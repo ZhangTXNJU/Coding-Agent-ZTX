@@ -13,6 +13,7 @@ from coding_agent.skills import (
     build_skills_prompt,
     load_custom_skills,
     parse_skill_file,
+    skill_prompt,
 )
 from coding_agent.tools import USE_SKILL, ToolContext, build_default_registry
 
@@ -160,6 +161,14 @@ def test_use_skill_unknown_lists_available(tmp_path):
 def test_use_skill_registered_in_default_registry():
     names = set(build_default_registry().names())
     assert "use_skill" in names
+
+
+def test_skill_prompt_renders_instructions():
+    skill = Skill("code-review", "审查代码质量", "第一步：审查。", "builtin")
+    out = skill_prompt(skill)
+    assert "【skill: code-review】" in out
+    assert "审查代码质量" in out
+    assert "第一步：审查。" in out
 
 
 # --------------------------------------------------------------------------- #

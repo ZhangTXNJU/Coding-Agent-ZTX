@@ -276,3 +276,8 @@ def build_skills_prompt(registry: SkillRegistry) -> str:
         return ""
     entries = "\n".join(f"- {s.name}：{s.description}" for s in registry.list())
     return "可用 skill（任务匹配时先用 use_skill 加载其指引再执行）：\n" + entries
+
+
+def skill_prompt(skill: Skill) -> str:
+    """把 skill 渲染成注入上下文的指引文本（use_skill 工具与 /skill-name 调用共用）。"""
+    return f"【skill: {skill.name}】{skill.description}\n\n{skill.instructions}"

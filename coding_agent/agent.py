@@ -16,7 +16,7 @@ from .errors import AgentError, MaxFailuresExceeded, MaxStepsExceeded, ParsingEr
 from .llm.client import ChatResponse, LLMClient, ToolCall
 from .messages import Conversation, Message, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
-from .skills import SkillRegistry, build_skills_prompt
+from .skills import Skill, SkillRegistry, build_skills_prompt, skill_prompt
 from .tools import ToolContext, ToolRegistry
 
 SYSTEM_PROMPT = (
@@ -99,8 +99,23 @@ class Agent:
         # 把子 agent 委托能力注入工具上下文（task 工具据此递归跑一个子 Agent）
         ctx.spawn_subagent = self._spawn_subagent
 
-    def run(self, task: str) -> str:
-        """执行一个任务，返回模型的最终回答。"""
+    def run(self, task: str, skill: Skill | None = None) -> str:
+        """执行一个任务，返回模型的最终回答。
+
+        skill 非空时，把其执行指引临时注入系统提示（仅本次 run 生效，
+        结束即恢复，不污染后续对话）。
+        """
+        if skill is None:
+            return self._run(task)
+        original = self.conversation.system_prompt
+        self.conversation.system_prompt = original + "\n\n" + skill_prompt(skill)
+        try:
+            return self._run(task)
+        finally:
+            self.conversation.system_prompt = original
+
+    def _run(self, task: str) -> str:
+        """run 的核心闭环：决策 → 解析 → 执行 → 回传 → 终止。"""
         self.conversation.add_user(task)
         self.conversation.max_tokens = self.config.max_tokens
         consecutive_failures = 0
