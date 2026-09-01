@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
 def _build(config: AgentConfig, args):
     """组装 UI / client / registry / agent，注入流式渲染与确认回调。"""
     from .agent import Agent, build_system_prompt
+    from .charter import load_charter
     from .llm.client import LLMClient
     from .messages import Conversation
     from .skills import DEFAULT_SKILLS_DIR, build_skill_registry
@@ -76,6 +77,11 @@ def _build(config: AgentConfig, args):
     for warn in skill_warnings:
         ui.info(f"skill：{warn}")
 
+    # 项目宪章：读取工作目录 Coding-Agent.md，注入 system prompt（最高优先级硬约束）
+    charter_text, _ = load_charter(config.workdir)
+    if charter_text:
+        ui.info(f"已加载项目宪章 Coding-Agent.md（{len(charter_text)} 字符）")
+
     ctx = ToolContext(
         workdir=config.workdir,
         command_timeout=config.command_timeout,
@@ -86,12 +92,13 @@ def _build(config: AgentConfig, args):
         config,
         client,
         registry,
-        Conversation(system_prompt=build_system_prompt(skills)),
+        Conversation(system_prompt=build_system_prompt(skills, charter_text)),
         ctx,
         on_text=ui.stream_text,
         on_tool_call=ui.tool_call,
         on_tool_result=ui.tool_result,
         verbose=args.verbose,
+        charter_text=charter_text,
     )
     ctx.confirm = ui.confirm  # 危险命令 → 交互式 [y/N] 确认
     ctx.ask_user = ui.ask_user  # 需求/方案不确定 → 交互式选项提问
