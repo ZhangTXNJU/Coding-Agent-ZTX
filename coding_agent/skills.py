@@ -34,6 +34,7 @@ class Skill:
     description: str  # 用途说明：让模型判断「何时适用」
     instructions: str  # 执行指引：触发后注入上下文的正文
     source: str = "builtin"  # "builtin" | "custom"
+    read_only: bool = False  # True 时仅暴露只读工具（规划/需求阶段禁止修改代码）
 
 
 class SkillRegistry:
@@ -170,7 +171,86 @@ BUILTIN_SKILLS = [
             "6. 回报：创建了哪个 skill、放在哪里、用途是什么；并提醒用户新 skill 在下次启动后生效。\n\n"
             "注意：\n"
             "- name 必须唯一；与内置 skill 重名会覆盖内置（按需决定）。\n"
-            "- 若用户想修改已有 skill，用 read_file 读取后 edit_file 更新对应文件。"
+            "- 若用户想修改已有 skill，用 read_file 读取后 edit_file 更新对应文件。\n"
+            "- 若该 skill 只做规划/分析、不应改动代码，可在 frontmatter 加一行 `read_only: true`，"
+            "触发后会自动禁用写文件与 bash 工具。"
+        ),
+    ),
+    # ------------------------------------------------------------------ #
+    # 需求/计划阶段 skill（specify/clarify/plan/tasks 为只读，implement 落盘）
+    # ------------------------------------------------------------------ #
+    Skill(
+        name="specify",
+        description="把模糊的功能诉求澄清并固化为可执行的需求规格（只读，不改代码）",
+        read_only=True,
+        instructions=(
+            "把一段功能诉求固化为可执行的需求规格，按以下流程执行：\n\n"
+            "1. 先读清现状：用 read_file / list_dir / glob / grep 了解相关代码与项目结构，不要凭空假设。\n"
+            "2. 拆解需求：识别目标用户、触发场景、期望行为、边界条件、约束。\n"
+            "3. 对影响范围或存在多种合理解释的关键点，最多提 3 个 [NEEDS CLARIFICATION]（按 范围 > 安全 > 体验 > 技术细节 的优先级）。\n"
+            "4. 输出结构化需求规格（Markdown）：\n"
+            "   - 目标（用户价值，一段话）\n"
+            "   - 用户场景与验收（可测试的验收条件）\n"
+            "   - 功能需求（每条可验证，编号 FR-001...）\n"
+            "   - 成功标准（可度量、与技术实现无关）\n"
+            "   - 边界与非目标（明确不做什么）\n"
+            "   - 假设与待澄清项\n"
+            "5. 只输出规格文本，不写文件、不改代码。"
+        ),
+    ),
+    Skill(
+        name="clarify",
+        description="针对已有需求规格提出澄清问题，把含糊处收敛为明确决策（只读）",
+        read_only=True,
+        instructions=(
+            "针对需求规格做澄清，把含糊/矛盾/缺漏处收敛为明确决策，按以下流程执行：\n\n"
+            "1. read_file 读取目标规格（若规格在近期对话中则直接引用），定位含糊、矛盾、缺漏之处。\n"
+            "2. 逐条列出澄清问题，每条给出：上下文、需要确认什么、可选方案（A/B/C 及各自影响）。\n"
+            "3. 按影响排序（范围 > 安全 > 体验 > 技术细节），一次最多 3 个问题，等用户回答后更新规格。\n"
+            "4. 输出澄清问题与更新后的规格要点，不写文件、不改代码。"
+        ),
+    ),
+    Skill(
+        name="plan",
+        description="基于需求规格产出可执行的实现计划（只读，不改代码）",
+        read_only=True,
+        instructions=(
+            "基于需求规格产出可执行的实现计划，按以下流程执行：\n\n"
+            "1. 读清现状：read_file / list_dir / glob / grep 摸清相关代码、目录结构、现有模式与依赖。\n"
+            "2. 设计实现方案：\n"
+            "   - 技术方案与关键决策（选型、权衡）\n"
+            "   - 架构/模块划分与数据流\n"
+            "   - 涉及文件清单（新增/修改/删除，精确到路径）\n"
+            "   - 分步实施顺序（含依赖关系）\n"
+            "   - 风险与回滚点\n"
+            "3. 输出实现计划（Markdown），步骤应能被 tasks skill 直接拆解为任务。\n"
+            "4. 只输出计划文本，不写文件、不改代码。"
+        ),
+    ),
+    Skill(
+        name="tasks",
+        description="把实现计划拆解为有序、带依赖与完成判据的任务清单（只读，只写 todo）",
+        read_only=True,
+        instructions=(
+            "把实现计划拆解为有序、带依赖的任务清单，按以下流程执行：\n\n"
+            "1. 输入为实现计划（近期对话中的 plan 输出或用户指定）。\n"
+            "2. 拆成可独立完成的小任务，每条包含：内容、依赖、完成判据。\n"
+            "3. 用 todo_write 把任务写入任务清单（每条 content 里写明完成判据），并按执行顺序排列依赖。\n"
+            "4. 输出任务清单；本阶段只规划不实现，不写文件、不改代码。"
+        ),
+    ),
+    Skill(
+        name="implement",
+        description="按既定的计划/任务清单执行实现，逐条完成并验证",
+        read_only=False,
+        instructions=(
+            "按既定的计划/任务清单执行实现，按以下流程执行：\n\n"
+            "1. 先读清现状与计划：read_file 读取计划/任务清单（或近期对话），确认范围与顺序。\n"
+            "2. 用 todo_write 把任务清单设为进行中，逐条实施：\n"
+            "   - 修改用 edit_file（精准替换），新建用 write_file，批量改动用 apply_patch\n"
+            "   - 每完成一条，立即用 bash 跑测试/命令验证，再标记该 todo 完成\n"
+            "3. 遵循计划，不擅自扩大范围；遇到计划外的关键决策先说明再动手。\n"
+            "4. 全部完成后用 bash 回归验证，并一句话总结做了什么、如何验证。"
         ),
     ),
 ]
@@ -226,7 +306,8 @@ def parse_skill_file(path: Path) -> Skill | str:
         return f"{path.name}: 缺少 description 字段"
     if not body:
         return f"{path.name}: 缺少执行指引（正文为空）"
-    return Skill(name=name, description=description, instructions=body, source="custom")
+    read_only = fields.get("read_only", "").strip().lower() in ("true", "yes", "1", "on")
+    return Skill(name=name, description=description, instructions=body, source="custom", read_only=read_only)
 
 
 def load_custom_skills(directory: Path) -> tuple[list[Skill], list[str]]:
@@ -274,7 +355,10 @@ def build_skills_prompt(registry: SkillRegistry) -> str:
     """生成追加到系统提示的 skill 列表（供模型判断何时使用 use_skill）。"""
     if not registry:
         return ""
-    entries = "\n".join(f"- {s.name}：{s.description}" for s in registry.list())
+    entries = "\n".join(
+        f"- {s.name}：{s.description}" + ("（只读）" if s.read_only else "")
+        for s in registry.list()
+    )
     return "可用 skill（任务匹配时先用 use_skill 加载其指引再执行）：\n" + entries
 
 

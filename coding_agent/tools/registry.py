@@ -11,6 +11,10 @@ from typing import Callable
 from ..errors import ToolError
 from ..skills import SkillRegistry
 
+# 只读工具白名单：规划/需求阶段仅暴露这些（默认拒绝，新工具不会误入只读模式）。
+# 读文件/列目录/搜索 + todo_write（todo 是内存规划状态，非文件写），不含 bash 与任何写文件工具。
+READ_ONLY_TOOL_NAMES = frozenset({"read_file", "list_dir", "glob", "grep", "todo_write"})
+
 
 @dataclass
 class ToolContext:
@@ -81,6 +85,14 @@ class ToolRegistry:
         reg = ToolRegistry()
         for n, tool in self._tools.items():
             if n != name:
+                reg.register(tool)
+        return reg
+
+    def read_only(self) -> "ToolRegistry":
+        """返回只含只读工具白名单的副本（规划/需求阶段：可读不可改）。"""
+        reg = ToolRegistry()
+        for n, tool in self._tools.items():
+            if n in READ_ONLY_TOOL_NAMES:
                 reg.register(tool)
         return reg
 

@@ -233,3 +233,41 @@ def test_replace_conversation_syncs_todos(tmp_path):
     assert agent.system_prompt == "new"
     assert agent.ctx.todos == new_conv.todos
     assert agent.conversation is new_conv
+
+
+def test_read_only_skill_blocks_writes_and_restores_registry(tmp_path):
+    from coding_agent.skills import Skill
+
+    (tmp_path / "foo.txt").write_text("hi\n")
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "read_file", '{"path": "foo.txt"}')]),  # 只读工具可用
+        resp(tool_calls=[tc("c2", "write_file", '{"path": "bar.txt", "content": "x"}')]),  # 写工具被禁
+        resp(content="规划完成", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    skill = Skill("plan", "产出实现计划", "只读规划。", "builtin", read_only=True)
+
+    result = agent.run("做规划", skill=skill)
+
+    assert result == "规划完成"
+    assert not (tmp_path / "bar.txt").exists()  # write_file 因未知工具失败，未落盘
+    # run 结束后工具集恢复完整（不污染后续对话）
+    assert "write_file" in set(agent.registry.names())
+    assert agent.conversation.system_prompt == "sys"
+
+
+def test_read_only_skill_exposes_only_read_tools_to_model(tmp_path):
+    from coding_agent.skills import Skill
+
+    class RecordingClient(ScriptedClient):
+        def chat(self, messages, tools=None, on_text=None):
+            self.last_tools = tools
+            return super().chat(messages, tools=tools, on_text=on_text)
+
+    client = RecordingClient([resp(content="规划", tool_calls=None, finish_reason="stop")])
+    agent = make_agent(tmp_path, client)
+    skill = Skill("specify", "写规格", "只读。", "builtin", read_only=True)
+    agent.run("规格", skill=skill)
+    exposed = {t["function"]["name"] for t in client.last_tools}
+    assert exposed == {"read_file", "list_dir", "glob", "grep", "todo_write"}
+    assert "write_file" not in exposed and "bash" not in exposed

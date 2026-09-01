@@ -106,16 +106,24 @@ class Agent:
         """执行一个任务，返回模型的最终回答。
 
         skill 非空时，把其执行指引临时注入系统提示（仅本次 run 生效，
-        结束即恢复，不污染后续对话）。
+        结束即恢复，不污染后续对话）。skill.read_only 为 True 时，本次 run
+        的工具集临时裁剪为只读白名单（禁写文件/bash），结束即恢复。
         """
         if skill is None:
             return self._run(task)
         original = self.conversation.system_prompt
-        self.conversation.system_prompt = original + "\n\n" + skill_prompt(skill)
+        original_registry = self.registry
+        injected = original + "\n\n" + skill_prompt(skill)
+        if skill.read_only:
+            injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
+            injected += "你没有写文件或执行 shell 命令的工具。"
+            self.registry = self.registry.read_only()
+        self.conversation.system_prompt = injected
         try:
             return self._run(task)
         finally:
             self.conversation.system_prompt = original
+            self.registry = original_registry
 
     def _run(self, task: str) -> str:
         """run 的核心闭环：决策 → 解析 → 执行 → 回传 → 终止。"""

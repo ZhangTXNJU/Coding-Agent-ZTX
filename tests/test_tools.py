@@ -280,6 +280,14 @@ def test_registry_duplicate_raises():
         reg.register(READ_FILE)
 
 
+def test_registry_read_only_keeps_only_read_tools():
+    ro = build_default_registry().read_only()
+    assert set(ro.names()) == {"read_file", "list_dir", "glob", "grep", "todo_write"}
+    # 写文件 / 命令执行 / 子 agent 委派一律排除
+    for excluded in ("write_file", "edit_file", "apply_patch", "bash", "task", "use_skill"):
+        assert excluded not in ro.names()
+
+
 # --------------------------------------------------------------------------- #
 # 健壮性：大文件拒读 / 非交互执行
 # --------------------------------------------------------------------------- #
