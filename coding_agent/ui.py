@@ -21,6 +21,7 @@ try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.application import get_app
     from prompt_toolkit.completion import Completer, Completion
+    from prompt_toolkit.filters import Condition
     from prompt_toolkit.formatted_text import FormattedText
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
@@ -41,6 +42,14 @@ if _HAS_PROMPT_TOOLKIT:
             event.current_buffer.insert_text("\n")
 
         return kb
+
+    def _typing_slash() -> bool:
+        """仅当当前输入以 / 开头时返回 True，用于动态启用补全与预留菜单空间。"""
+        try:
+            text = get_app().current_buffer.text
+        except Exception:  # pragma: no cover - 无活跃 app（如纯渲染测试）时关闭补全
+            return False
+        return text.lstrip().startswith("/")
 
     class _SlashCompleter(Completer):
         """斜杠命令补全：输入 / 列出内置命令；/skill 后列出 skill 名及用途。"""
@@ -121,7 +130,7 @@ class UI:
                     }
                 ),
                 key_bindings=_build_key_bindings(),
-                complete_while_typing=True,
+                complete_while_typing=Condition(_typing_slash),
                 completer=_SlashCompleter(_SLASH_COMMANDS, lambda: self._skills),
             )
 
@@ -301,9 +310,8 @@ class UI:
                 message=FormattedText([("class:prompt", "❯ ")]),
                 rprompt=FormattedText([("class:hint", " / 命令菜单 · /help · /exit ")]),
                 bottom_toolbar=self._bottom_toolbar,
-                # complete_while_typing 会让 prompt_toolkit 默认在输入框下预留
-                # 一整块菜单空间（即使没有补全项）；置 0 让菜单仅在 / 时浮层显示。
-                reserve_space_for_menu=0,
+                # complete_while_typing 是动态 Condition：仅在输入以 / 开头时
+                # 才预留菜单空间并弹出补全，普通文本输入不占用下方空白。
             )
         return self.console.input("[bold green]❯ [/]")
 

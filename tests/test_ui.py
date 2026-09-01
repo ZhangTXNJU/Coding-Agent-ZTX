@@ -114,3 +114,13 @@ def test_slash_completer_prefix_filter():
 def test_slash_completer_no_menu_for_plain_text():
     ui = UI()
     assert _completions(ui, "帮我改个 bug") == []
+
+
+def test_complete_while_typing_is_dynamic_not_constant():
+    """回归：补全触发必须是动态过滤器，而非常量 True（常量 True 会常驻预留空白）。"""
+    from prompt_toolkit.filters import Condition
+
+    ui = UI()
+    cwt = ui._pt_session.complete_while_typing
+    assert isinstance(cwt, Condition)  # 动态过滤器，按输入内容决定是否开启
+    assert cwt() is False  # 无活跃 app（纯测试环境）时关闭 → 不预留菜单空间
