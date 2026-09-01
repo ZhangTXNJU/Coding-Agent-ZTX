@@ -190,3 +190,37 @@ def test_build_system_prompt_empty_registry_falls_back():
 
 def test_build_skills_prompt_empty():
     assert build_skills_prompt(SkillRegistry()) == ""
+
+
+# --------------------------------------------------------------------------- #
+# 只读 skill（read_only 字段）
+# --------------------------------------------------------------------------- #
+
+
+def test_read_only_defaults_false():
+    assert Skill("x", "desc", "instr").read_only is False
+
+
+def test_parse_skill_file_read_only_true(tmp_path):
+    content = "---\nname: my-plan\ndescription: 只读规划\nread_only: true\n---\n正文\n"
+    skill = parse_skill_file(_write_skill(tmp_path, content))
+    assert isinstance(skill, Skill)
+    assert skill.read_only is True
+
+
+def test_parse_skill_file_read_only_defaults_false(tmp_path):
+    skill = parse_skill_file(_write_skill(tmp_path, VALID))
+    assert isinstance(skill, Skill)
+    assert skill.read_only is False
+
+
+def test_builtin_phase_skills_read_only_flags():
+    reg, _, _ = build_skill_registry()
+    for name in ("specify", "clarify", "plan", "tasks"):
+        assert reg.get(name).read_only is True
+    assert reg.get("implement").read_only is False
+
+
+def test_build_skills_prompt_marks_read_only():
+    reg, _, _ = build_skill_registry()
+    assert "（只读）" in build_skills_prompt(reg)
