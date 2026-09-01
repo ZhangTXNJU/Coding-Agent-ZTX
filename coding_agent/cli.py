@@ -94,6 +94,8 @@ def _build(config: AgentConfig, args):
         verbose=args.verbose,
     )
     ctx.confirm = ui.confirm  # 危险命令 → 交互式 [y/N] 确认
+    ui.bind_context(ctx)  # 实时任务面板读取 todos
+    ui.bind_skills(skills.list())  # 斜杠补全菜单读取 skill
     return ui, agent
 
 

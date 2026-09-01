@@ -20,6 +20,7 @@ except ImportError:  # pragma: no cover - 极少数环境无 readline
 try:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.application import get_app
+    from prompt_toolkit.completion import Completer, Completion
     from prompt_toolkit.formatted_text import FormattedText
     from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.key_binding import KeyBindings
@@ -41,6 +42,33 @@ if _HAS_PROMPT_TOOLKIT:
 
         return kb
 
+    class _SlashCompleter(Completer):
+        """斜杠命令补全：输入 / 列出内置命令；/skill 后列出 skill 名及用途。"""
+
+        def __init__(self, commands, skills_getter):
+            self._commands = commands
+            self._skills_getter = skills_getter
+
+        def get_completions(self, document, complete_event):
+            text = document.text_before_cursor.lstrip()
+            if not text.startswith("/"):
+                return
+            # /skill <partial> → 补全 skill 名（display_meta 展示用途说明）
+            if text.startswith("/skill "):
+                rest = text[len("/skill "):]
+                for skill in self._skills_getter():
+                    if skill.name.startswith(rest):
+                        yield Completion(
+                            skill.name,
+                            start_position=-len(rest),
+                            display_meta=skill.description,
+                        )
+                return
+            # 否则补全内置命令
+            for name, desc in self._commands:
+                if name.startswith(text):
+                    yield Completion(name, start_position=-len(text), display_meta=desc)
+
 # figlet 风格的 "CA" 单色 logo（配合下方渐变渲染）
 LOGO = (
     "   ___    _    \n"
@@ -59,12 +87,27 @@ def _lerp(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[i
     return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
+# 内置斜杠命令（名称, 用途说明），用于输入 / 时的补全菜单
+_SLASH_COMMANDS = [
+    ("/help", "显示帮助"),
+    ("/skills", "列出全部可用 skill"),
+    ("/skill", "查看/调用某个 skill（/skill <名称>）"),
+    ("/sessions", "列出会话历史"),
+    ("/continue", "续接会话"),
+    ("/clear", "清空当前对话"),
+    ("/session", "显示当前会话 ID"),
+    ("/exit", "退出"),
+]
+
+
 class UI:
     """渲染与交互的统一入口。"""
 
     def __init__(self, verbose: bool = False, console: Console | None = None) -> None:
         self.console = console or Console()
         self.verbose = verbose
+        self._skills: list = []  # 斜杠补全用的 skill 列表（由 cli 绑定）
+        self._ctx = None  # ToolContext 引用，实时任务面板据此读取 todos
         # prompt_toolkit 输入会话：常驻 ❯ 提示符 + 上下横线（未安装时降级）
         self._pt_session = None
         if _HAS_PROMPT_TOOLKIT:
@@ -78,6 +121,8 @@ class UI:
                     }
                 ),
                 key_bindings=_build_key_bindings(),
+                complete_while_typing=True,
+                completer=_SlashCompleter(_SLASH_COMMANDS, lambda: self._skills),
             )
 
     # -- 渲染 --------------------------------------------------------------- #
@@ -109,6 +154,8 @@ class UI:
 
     def tool_call(self, name: str, args: dict) -> None:
         """渲染一次工具调用（面板展示工具名 + 参数）。"""
+        if name == "todo_write":
+            return  # 任务清单改由 tool_result 统一渲染，避免重复刷屏
         self.console.print()  # 结束上一段流式文本
         body = Text(name, style="bold cyan")
         if args:
@@ -119,6 +166,9 @@ class UI:
 
     def tool_result(self, name: str, result: str) -> None:
         """渲染工具结果（截断展示，避免刷屏）。"""
+        if name == "todo_write" and self._ctx is not None:
+            self.render_todos(self._ctx.todos)
+            return
         max_chars = 600
         shown = (
             result
@@ -131,6 +181,42 @@ class UI:
                 title=f"结果 · {name}",
                 title_align="left",
                 border_style="bright_black",
+            )
+        )
+
+    def render_todos(self, todos: list) -> None:
+        """渲染实时任务清单面板：随 todo_write 调用刷新，标记完成/进行中/待办。"""
+        if not todos:
+            self.console.print(
+                Panel(
+                    Text("任务清单为空", style="dim"),
+                    title="任务清单",
+                    title_align="left",
+                    border_style="bright_black",
+                )
+            )
+            return
+        body = Text()
+        for t in todos:
+            status = t.get("status", "pending")
+            content = str(t.get("content", ""))
+            if status == "completed":
+                body.append("✔ ", style="bold green")
+                body.append(content, style="green strike")
+            elif status == "in_progress":
+                body.append("▶ ", style="bold yellow")
+                body.append(content, style="yellow")
+            else:
+                body.append("☐ ", style="dim")
+                body.append(content, style="default")
+            body.append("\n")
+        done = sum(1 for t in todos if t.get("status") == "completed")
+        self.console.print(
+            Panel(
+                body,
+                title=f"任务清单 · {done}/{len(todos)} 完成",
+                title_align="left",
+                border_style="cyan",
             )
         )
 
@@ -183,6 +269,14 @@ class UI:
             Panel(body, title=f"skill · {skill.name} · {source}", title_align="left", border_style="cyan")
         )
 
+    def bind_context(self, ctx) -> None:
+        """绑定 ToolContext，实时任务面板据此读取 todos。"""
+        self._ctx = ctx
+
+    def bind_skills(self, skills) -> None:
+        """绑定当前可用 skill 列表，斜杠补全菜单据此展示。"""
+        self._skills = list(skills)
+
     def help(self) -> None:
         self.console.print(
             "[bold]可用命令：[/]\n"
@@ -193,6 +287,7 @@ class UI:
             "  [cyan]/continue[/]    续接会话（/continue <ID或序号>，缺省为最新）\n"
             "  [cyan]/clear[/]       清空当前对话上下文\n"
             "  [cyan]/exit[/]        退出（或输入 exit / quit）\n"
+            "  [dim]输入 / 弹出命令与 skill 补全菜单（含 skill 用途说明）[/]\n"
             "  [dim]直接输入自然语言任务 → 交给 agent 执行（匹配 skill 时自动调用）[/]"
         )
 
@@ -204,7 +299,7 @@ class UI:
             self.console.print("─" * (self.console.width or 80), style="dim")
             return self._pt_session.prompt(
                 message=FormattedText([("class:prompt", "❯ ")]),
-                rprompt=FormattedText([("class:hint", " /help · /exit ")]),
+                rprompt=FormattedText([("class:hint", " / 命令菜单 · /help · /exit ")]),
                 bottom_toolbar=self._bottom_toolbar,
             )
         return self.console.input("[bold green]❯ [/]")
