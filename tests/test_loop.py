@@ -5,9 +5,9 @@ import pytest
 
 from coding_agent.agent import Agent
 from coding_agent.config import AgentConfig
-from coding_agent.errors import MaxFailuresExceeded, MaxStepsExceeded
+from coding_agent.errors import LLMError, MaxFailuresExceeded, MaxStepsExceeded
 from coding_agent.llm.client import ChatResponse, ToolCall
-from coding_agent.messages import Conversation
+from coding_agent.messages import Conversation, Message, messages_to_text
 from coding_agent.tools import ToolContext, build_default_registry
 
 
@@ -141,3 +141,46 @@ def test_compaction_triggers_when_over_budget(tmp_path):
     agent.run("继续")
     assert conv.summary != ""
     assert len(conv.messages) < 40
+
+
+def test_compaction_uses_model_summary(tmp_path):
+    # 压缩触发时应优先采用 LLM 语义摘要，而非确定性 flatten
+    config = AgentConfig(max_steps=3, max_failures=3, max_tokens=300)
+    client = ScriptedClient([
+        resp(content="## 目标\n早期历史摘要", tool_calls=None, finish_reason="stop"),  # 压缩用的摘要
+        resp(content="完成", tool_calls=None, finish_reason="stop"),  # 主循环最终回答
+    ])
+    conv = Conversation(system_prompt="sys")
+    for i in range(40):
+        conv.add_user(f"历史消息 {i} " + "x" * 80)
+    agent = Agent(config, client, build_default_registry(), conv, ToolContext(workdir=tmp_path))
+    agent.run("继续")
+    assert "早期历史摘要" in conv.summary
+    assert len(conv.messages) < 40
+
+
+def test_llm_summarize_returns_model_summary(tmp_path):
+    client = ScriptedClient([
+        resp(content="## 目标\n完成重构", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    msgs = [Message("user", "把 a 改成 b"), Message("tool", "很长的输出", name="bash")]
+    assert agent._llm_summarize(msgs) == "## 目标\n完成重构"
+
+
+def test_llm_summarize_falls_back_on_llm_error(tmp_path):
+    class FailingClient:
+        def chat(self, messages, tools=None, on_text=None):
+            raise LLMError("模型不可用")
+
+    agent = make_agent(tmp_path, FailingClient())
+    msgs = [Message("user", "hello"), Message("tool", "out", name="bash")]
+    assert agent._llm_summarize(msgs) == messages_to_text(msgs)
+
+
+def test_llm_summarize_falls_back_on_empty(tmp_path):
+    # 模型返回空内容也应回退确定性 flatten
+    client = ScriptedClient([resp(content="", tool_calls=None, finish_reason="stop")])
+    agent = make_agent(tmp_path, client)
+    msgs = [Message("user", "hello")]
+    assert agent._llm_summarize(msgs) == messages_to_text(msgs)

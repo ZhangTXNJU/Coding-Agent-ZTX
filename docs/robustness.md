@@ -76,7 +76,7 @@ _compact_if_needed():
 - **边界安全**：切点必须落在非 `tool` 消息上。若尾部以孤立的 tool 消息开头（其 `assistant(tool_calls)` 已被折叠），会破坏 OpenAI 的 `assistant(tool_calls)→tool` 配对，故向前推进切点。
 - **累积摘要**：二次压缩时把上一轮摘要并入本轮待折叠内容，避免更早历史被丢弃。
 
-当前摘要器为确定性的 `messages_to_text`（把旧消息折叠成纯文本，工具结果截到 500 字符）——这是无 LLM 调用的第一版，语义化 LLM 摘要见「后续工作」。
+摘要器为 `Agent._llm_summarize`（`agent.py`）：先用一次**无工具**的 LLM 调用把旧消息压缩成结构化语义摘要（`SUMMARY_PROMPT` 要求保留目标/决策/文件/错误/待办、丢弃噪音）；若 LLM 调用失败或返回空内容，**回退**到确定性的 `messages_to_text`（纯文本折叠，工具结果截到 500 字符），保证压缩永不因摘要失败而中断。
 
 ## 四、配置项
 
@@ -97,6 +97,6 @@ _compact_if_needed():
 ## 六、已知限制与后续工作
 
 1. **内存峰值仍由 timeout 兜底**：`bash` 用 `subprocess.run(capture_output=True)` 一次性读入全部输出，极端场景（如 `cat /dev/urandom`）靠超时止损，未实现 Claude Code 那样的「Popen 增量读取 + 字节上限」。后续可改为流式读 + 超限即 kill。
-2. **摘要为确定性 flatten，非 LLM 语义摘要**：`messages_to_text` 只是把旧消息折叠成文本，不产生真正的语义摘要；长会话仍会累积。后续可在 `LLMClient` 增加 `summarize()` 用一次无工具调用做语义摘要。
+2. ~~摘要为确定性 flatten，非 LLM 语义摘要~~（已实现）：压缩摘要现为 LLM 语义摘要，失败回退确定性 flatten。
 3. **token 估算粗略**：`estimate_tokens` 按「CJK=1 token、其余 4 字符 1 token」估算，不精确；真实预算应参考目标模型的上下文窗口。
 4. **offset/limit 读大文件仍整读进内存**：分片读取目前是「先读全文件再切行」，对超大文件不理想；后续可改为按行流式读取。

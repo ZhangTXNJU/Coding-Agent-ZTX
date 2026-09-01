@@ -14,7 +14,7 @@ from typing import Callable
 from .config import AgentConfig
 from .errors import AgentError, MaxFailuresExceeded, MaxStepsExceeded, ParsingError, ToolError
 from .llm.client import ChatResponse, LLMClient, ToolCall
-from .messages import Conversation, messages_to_text, truncate_text
+from .messages import Conversation, Message, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
 from .skills import SkillRegistry, build_skills_prompt
 from .tools import ToolContext, ToolRegistry
@@ -43,6 +43,15 @@ SUBAGENT_PROMPT = (
     "4. 你的中间过程不会被主 agent 看到，因此最后必须用一句话清晰总结："
     "做了什么、改了什么、如何验证、结果如何。\n"
     "5. 若无法完成，明确说明失败原因，绝不假装完成。"
+)
+
+SUMMARY_PROMPT = (
+    "你是对话历史的压缩器。下面是一段 agent 的历史消息，请把它压缩成一段简洁的结构化摘要，"
+    "用于在上下文超限时替代原始消息。要求：\n"
+    "1. 保留关键信息：用户诉求、已做决策、涉及的文件路径、改动要点、验证结果、错误与修复、未完成事项。\n"
+    "2. 丢弃噪音：冗长的命令输出、重复的探索、无关的试错；长输出用一句话概括即可。\n"
+    "3. 用 Markdown 分节：目标 / 已完成 / 关键决策 / 涉及文件 / 错误与修复 / 待办。\n"
+    "4. 只输出摘要正文，不要任何解释或寒暄。"
 )
 
 
@@ -160,7 +169,28 @@ class Agent:
             return
         self.conversation.trim_tool_results()  # 一级：截断超长工具结果
         if self.conversation.needs_compaction():
-            self.conversation.compact(messages_to_text)  # 二/三级：折叠旧消息为摘要
+            self.conversation.compact(self._llm_summarize)  # 二/三级：折叠旧消息为语义摘要
+
+    def _llm_summarize(self, messages: list[Message]) -> str:
+        """语义摘要：让 LLM 把历史压缩成结构化摘要；失败/空结果回退到确定性 flatten。"""
+        flat = messages_to_text(messages)
+        if not flat.strip():
+            return flat
+        try:
+            resp = self.client.chat(
+                [
+                    {"role": "system", "content": SUMMARY_PROMPT},
+                    {"role": "user", "content": flat},
+                ],
+                tools=None,
+                on_text=None,
+            )
+            summary = (resp.content or "").strip()
+            if summary:
+                return summary
+        except AgentError:
+            pass  # LLM 摘要失败，回退确定性折叠
+        return flat
 
     def _execute_tool(self, tc: ToolCall) -> tuple[str, bool]:
         """执行单个工具调用，返回 (结果文本, 是否成功)。"""
