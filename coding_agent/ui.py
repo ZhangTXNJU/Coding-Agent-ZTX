@@ -12,6 +12,8 @@ from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
 
+from .tools.ask_user import format_ask_user_result, resolve_answer
+
 try:
     import readline  # noqa: F401  # 启用 input() 的行编辑与历史（macOS 为 libedit）
 except ImportError:  # pragma: no cover - 极少数环境无 readline
@@ -193,8 +195,9 @@ class UI:
 
     def tool_call(self, name: str, args: dict) -> None:
         """渲染一次工具调用（面板展示工具名 + 参数）。"""
-        if name == "todo_write":
-            return  # 任务清单改由 tool_result 统一渲染，避免重复刷屏
+        if name in ("todo_write", "ask_user"):
+            # todo_write 改由 tool_result 渲染；ask_user 由下方交互提示自渲染，均不重复刷 JSON
+            return
         self.console.print()  # 结束上一段流式文本
         body = Text(name, style="bold cyan")
         if args:
@@ -359,3 +362,41 @@ class UI:
         )
         ans = self.console.input("[bold yellow]  [y/N] [/]").strip().lower()
         return ans in ("y", "yes")
+
+    def ask_user(self, questions: list) -> str:
+        """交互式向用户提问（ask_user 工具回调）：逐题渲染选项、收集选择、返回结果文本。"""
+        answers = [(q, self._ask_one(q, i)) for i, q in enumerate(questions, 1)]
+        return format_ask_user_result(answers)
+
+    def _ask_one(self, question: dict, index: int) -> str:
+        """渲染单个问题并收集答案，返回「已解析答案」文本。"""
+        header = str(question.get("header") or "").strip()
+        text = str(question.get("question") or "").strip()
+        options = question.get("options") or []
+        multi = bool(question.get("multiSelect", False))
+
+        body = Text()
+        if text:
+            body.append(text + "\n\n", style="bold")
+        for n, opt in enumerate(options, 1):
+            label = str(opt.get("label") or "").strip() or f"选项 {n}"
+            desc = str(opt.get("description") or "").strip()
+            body.append(f"{n}. ", style="cyan")
+            body.append(label, style="bold")
+            if desc:
+                body.append(f"  —— {desc}", style="dim")
+            body.append("\n")
+
+        title = f"提问 Q{index}"
+        if header:
+            title += f" · {header}"
+        self.console.print()
+        self.console.print(
+            Panel(body, title=title, title_align="left", border_style="magenta")
+        )
+        hint = "可多选：输入序号，逗号分隔（如 1,3）" if multi else "输入序号（如 1），或直接输入自定义答案"
+        try:
+            raw = self.console.input(f"[bold magenta]  你的选择[/]（{hint}）: ")
+        except (EOFError, KeyboardInterrupt):
+            return "（非交互环境，未获得回答）"
+        return resolve_answer(question, raw)

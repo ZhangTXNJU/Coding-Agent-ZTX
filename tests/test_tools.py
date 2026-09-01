@@ -282,10 +282,89 @@ def test_registry_duplicate_raises():
 
 def test_registry_read_only_keeps_only_read_tools():
     ro = build_default_registry().read_only()
-    assert set(ro.names()) == {"read_file", "list_dir", "glob", "grep", "todo_write"}
+    assert set(ro.names()) == {"read_file", "list_dir", "glob", "grep", "todo_write", "ask_user"}
     # 写文件 / 命令执行 / 子 agent 委派一律排除
     for excluded in ("write_file", "edit_file", "apply_patch", "bash", "task", "use_skill"):
         assert excluded not in ro.names()
+
+
+# --------------------------------------------------------------------------- #
+# ask_user（交互提问）
+# --------------------------------------------------------------------------- #
+
+
+def test_resolve_answer_single_digit():
+    from coding_agent.tools.ask_user import resolve_answer
+
+    q = {"options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}
+    assert resolve_answer(q, "2") == "B"
+
+
+def test_resolve_answer_multi():
+    from coding_agent.tools.ask_user import resolve_answer
+
+    q = {"options": [{"label": "A"}, {"label": "B"}, {"label": "C"}]}
+    assert resolve_answer(q, "1,3") == "A；C"
+
+
+def test_resolve_answer_custom_text():
+    from coding_agent.tools.ask_user import resolve_answer
+
+    assert resolve_answer({"options": []}, "MySQL 8.0") == "MySQL 8.0"
+
+
+def test_resolve_answer_empty_returns_unanswered():
+    from coding_agent.tools.ask_user import resolve_answer
+
+    assert resolve_answer({"options": []}, "") == "（未回答）"
+
+
+def test_resolve_answer_out_of_range():
+    from coding_agent.tools.ask_user import resolve_answer
+
+    assert resolve_answer({"options": [{"label": "A"}]}, "9") == "（无效序号）"
+
+
+def test_ask_user_requires_questions(ctx):
+    from coding_agent.tools.ask_user import ASK_USER
+
+    with pytest.raises(ToolError, match="问题"):
+        ASK_USER.handler({"questions": []}, ctx)
+
+
+def test_ask_user_requires_callback(ctx):
+    from coding_agent.tools.ask_user import ASK_USER
+
+    q = [{"question": "选哪个", "options": [{"label": "A"}]}]
+    with pytest.raises(ToolError, match="交互"):
+        ASK_USER.handler({"questions": q}, ctx)
+
+
+def test_ask_user_calls_callback(ctx):
+    from coding_agent.tools.ask_user import ASK_USER
+
+    ctx.ask_user = lambda qs: "用户回答：\n  Q1【库】: PostgreSQL"
+    out = ASK_USER.handler(
+        {"questions": [{"question": "选哪个库", "header": "库", "options": [{"label": "PostgreSQL"}]}]},
+        ctx,
+    )
+    assert "PostgreSQL" in out
+
+
+def test_ask_user_in_default_and_read_only_registry():
+    assert "ask_user" in set(build_default_registry().names())
+    assert "ask_user" in set(build_default_registry().read_only().names())
+
+
+def test_format_ask_user_result():
+    from coding_agent.tools.ask_user import format_ask_user_result
+
+    out = format_ask_user_result([
+        ({"header": "数据库", "question": "选哪个"}, "PostgreSQL"),
+        ({"header": "功能", "question": "要哪些"}, "缓存；鉴权"),
+    ])
+    assert "Q1【数据库】: PostgreSQL" in out
+    assert "Q2【功能】: 缓存；鉴权" in out
 
 
 # --------------------------------------------------------------------------- #

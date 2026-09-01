@@ -12,8 +12,9 @@ from ..errors import ToolError
 from ..skills import SkillRegistry
 
 # 只读工具白名单：规划/需求阶段仅暴露这些（默认拒绝，新工具不会误入只读模式）。
-# 读文件/列目录/搜索 + todo_write（todo 是内存规划状态，非文件写），不含 bash 与任何写文件工具。
-READ_ONLY_TOOL_NAMES = frozenset({"read_file", "list_dir", "glob", "grep", "todo_write"})
+# 读文件/列目录/搜索 + todo_write（todo 是内存规划状态，非文件写）+ ask_user（只读提问），
+# 不含 bash 与任何写文件工具。
+READ_ONLY_TOOL_NAMES = frozenset({"read_file", "list_dir", "glob", "grep", "todo_write", "ask_user"})
 
 
 @dataclass
@@ -25,6 +26,8 @@ class ToolContext:
     auto_approve: bool = False
     # 危险命令确认回调：返回 True 才放行。Phase 8 由 UI 注入（rich [y/N] 提示）。
     confirm: Callable[[str], bool] | None = None
+    # 交互提问回调（ask_user 工具）：接收问题列表，返回用户回答文本。由 UI 注入。
+    ask_user: Callable[[list], str] | None = None
     # todo_write 的状态载体（跨步持久，直到会话结束）。
     todos: list = field(default_factory=list)
     # use_skill 的 skill 来源（内置 + 自定义）。
