@@ -289,3 +289,24 @@ def test_ask_user_feeds_answer_back_to_model(tmp_path):
     # 用户回答作为 tool 结果回传给了模型
     tool_msg = next(m for m in agent.conversation.messages if m.role == "tool")
     assert "PostgreSQL" in tool_msg.content
+
+
+def test_with_charter_empty_is_noop():
+    from coding_agent.agent import _with_charter
+
+    assert _with_charter("BASE", "") == "BASE"
+    assert _with_charter("BASE", "   \n") == "BASE"
+
+
+def test_subagent_inherits_charter(tmp_path):
+    client = ScriptedClient([resp(content="子任务完成", tool_calls=None, finish_reason="stop")])
+    agent = make_agent(tmp_path, client)
+    agent.charter_text = "禁止修改 tests/"
+
+    result = agent._spawn_subagent("写个函数")
+
+    assert result == "子任务完成"
+    # 子 agent 的 system 提示应注入与主 agent 相同的项目宪章
+    sub_system = client.calls[0][0]["content"]
+    assert "项目宪章" in sub_system
+    assert "禁止修改 tests/" in sub_system

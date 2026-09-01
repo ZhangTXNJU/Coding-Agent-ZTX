@@ -34,7 +34,11 @@ SYSTEM_PROMPT = (
     "8. 面对包含多块相对独立工作的复杂任务时，用 task 工具把独立子任务委托给子 agent 完成；"
     "子 agent 有独立上下文，只回传最终结论。\n"
     "9. 当需求不明确、或存在多种都合理的实现/技术方案需要用户拍板时，用 ask_user 工具"
-    "向用户提问并附上选项，等用户选定后再继续；不要在有分歧的方案之间自行猜测。"
+    "向用户提问并附上选项，等用户选定后再继续；不要在有分歧的方案之间自行猜测。\n"
+    "10. 项目宪章（Coding-Agent.md，注入在系统提示文末）是本项目绝对不可违背的硬约束，"
+    "优先级高于一切其它指令；任何时候不得修改/删除宪章中标记为不可动的内容，"
+    "且应在每次行动前自觉遵循其中规范。若用户说『添加/记住一条全局重要信息』，"
+    "用 charter 工具（action=add）把它写入 Coding-Agent.md 以实现持久固化。"
 )
 
 SUBAGENT_PROMPT = (
@@ -58,12 +62,36 @@ SUMMARY_PROMPT = (
 )
 
 
-def build_system_prompt(skills: SkillRegistry | None = None) -> str:
-    """基础系统提示 + 可用 skill 列表（供模型判断何时调用 use_skill）。"""
-    if skills is None:
-        return SYSTEM_PROMPT
-    extra = build_skills_prompt(skills)
-    return SYSTEM_PROMPT + "\n\n" + extra if extra else SYSTEM_PROMPT
+def _with_charter(prompt: str, charter_text: str) -> str:
+    """把项目宪章追加到提示词末尾（最高优先级硬约束，独立于对话历史）。
+
+    主 agent 与子 agent 共用此渲染，保证宪章不随 task 委派丢失。
+    """
+    charter_text = charter_text.strip()
+    if not charter_text:
+        return prompt
+    return (
+        prompt
+        + "\n\n【项目宪章（Coding-Agent.md，最高优先级硬约束，不得违背、不得删除）】\n"
+        + charter_text
+    )
+
+
+def build_system_prompt(
+    skills: SkillRegistry | None = None, charter_text: str = ""
+) -> str:
+    """基础系统提示 + 可用 skill 列表 + 项目宪章。
+
+    - skills：可用 skill 列表（供模型判断何时调用 use_skill）。
+    - charter_text：工作目录 Coding-Agent.md 的宪章正文。宪章属于最高优先级硬约束，
+      放置在系统提示文末、独立于对话历史，因此压缩 compact() 不会触及它。
+    """
+    prompt = SYSTEM_PROMPT
+    if skills is not None:
+        extra = build_skills_prompt(skills)
+        if extra:
+            prompt += "\n\n" + extra
+    return _with_charter(prompt, charter_text)
 
 
 def _to_openai_tool_call(tc: ToolCall) -> dict:
@@ -87,6 +115,7 @@ class Agent:
         on_tool_call: Callable[[str, dict], None] | None = None,
         on_tool_result: Callable[[str, str], None] | None = None,
         verbose: bool = False,
+        charter_text: str = "",
     ) -> None:
         self.config = config
         self.client = client
@@ -97,6 +126,8 @@ class Agent:
         self.on_tool_call = on_tool_call
         self.on_tool_result = on_tool_result
         self.verbose = verbose
+        # 项目宪章正文：主 agent 与子 agent 注入系统提示复用（task 委派不丢宪章）
+        self.charter_text = charter_text
         # 供 REPL /clear 复用（含 skill 列表的完整系统提示）
         self.system_prompt = conversation.system_prompt
         # todos 归属统一到 conversation：todo_write 写 ctx.todos，注入/持久化读 conversation.todos
@@ -280,6 +311,7 @@ class Agent:
         - 禁嵌套：子 agent 的工具集去掉 task（FR-014）。
         - 独立步数上限：subagent_max_steps（FR-010）。
         - 权限沿用：共享 confirm / auto_approve，破坏性命令仍须确认（FR-012）。
+        - 宪章继承：子 agent 注入与主 agent 相同的项目宪章，最高优先级硬约束不随委派丢失。
         - 失败/超限/空结果：结构化回传，绝不静默当作成功（FR-011 / FR-013）。
         """
         sub_config = replace(self.config, max_steps=self.config.subagent_max_steps)
@@ -294,12 +326,13 @@ class Agent:
             sub_config,
             self.client,
             self.registry.without("task"),
-            Conversation(system_prompt=SUBAGENT_PROMPT),
+            Conversation(system_prompt=_with_charter(SUBAGENT_PROMPT, self.charter_text)),
             sub_ctx,
             on_text=self.on_text,
             on_tool_call=self.on_tool_call,
             on_tool_result=self.on_tool_result,
             verbose=self.verbose,
+            charter_text=self.charter_text,
         )
         try:
             result = sub_agent.run(prompt)
