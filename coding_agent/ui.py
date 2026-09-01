@@ -301,6 +301,9 @@ class UI:
                 message=FormattedText([("class:prompt", "❯ ")]),
                 rprompt=FormattedText([("class:hint", " / 命令菜单 · /help · /exit ")]),
                 bottom_toolbar=self._bottom_toolbar,
+                # complete_while_typing 会让 prompt_toolkit 默认在输入框下预留
+                # 一整块菜单空间（即使没有补全项）；置 0 让菜单仅在 / 时浮层显示。
+                reserve_space_for_menu=0,
             )
         return self.console.input("[bold green]❯ [/]")
 
