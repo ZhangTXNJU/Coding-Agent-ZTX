@@ -96,7 +96,7 @@ def run_bash(args: dict, ctx: ToolContext) -> str:
 
 
 def _run_bash_background(command: str, ctx: ToolContext) -> str:
-    """后台启动命令并立即返回任务号，用 bash_wait 稍后查询结果。
+    """后台启动命令并立即返回任务号，用 background_wait 稍后查询结果。
 
     关键点：
       - 输出重定向到临时文件而非 stdout=PIPE——若用 PIPE 且长时间不读取，输出写满
@@ -126,7 +126,7 @@ def _run_bash_background(command: str, ctx: ToolContext) -> str:
         _BG_TASKS[task_id] = (proc, out_f.name)
     return (
         f"已后台启动任务 #{task_id}：{command}\n"
-        f"命令在后台运行，本工具已立即返回。稍后用 bash_wait(task_id={task_id!r}) 查询结果。"
+        f"命令在后台运行，本工具已立即返回。稍后用 background_wait(task_id={task_id!r}) 查询结果。"
     )
 
 
@@ -140,8 +140,28 @@ def _read_output(path: str, max_chars: int = _BG_OUTPUT_MAX_CHARS) -> str:
     return text[-max_chars:] if len(text) > max_chars else text
 
 
-def wait_bash(args: dict, ctx: ToolContext) -> str:
-    """查询/等待一个后台任务：阻塞直到结束或超时。"""
+def _take_output(out_path: str) -> str:
+    """读取并删除输出临时文件；文件不存在时返回空串。"""
+    output = _read_output(out_path)
+    try:
+        os.unlink(out_path)
+    except OSError:
+        pass
+    return output
+
+
+def _finish_task(task_id: str, proc: subprocess.Popen, out_path: str) -> str:
+    """收集一个已结束任务的结果：从注册表移除、读输出、删临时文件、格式化。"""
+    with _BG_LOCK:
+        _BG_TASKS.pop(task_id, None)
+    output = _take_output(out_path)
+    if not output.strip():
+        output = "（无输出）"
+    return f"任务 #{task_id} 已结束，exit_code: {proc.returncode}\n{output}"
+
+
+def background_wait(args: dict, ctx: ToolContext) -> str:
+    """阻塞等待一个后台任务结束并返回其输出；超时只表示本次没等到。"""
     task_id = str(args["task_id"])
     timeout = args.get("timeout") or ctx.command_timeout
     with _BG_LOCK:
@@ -155,18 +175,68 @@ def wait_bash(args: dict, ctx: ToolContext) -> str:
         # 超时只表示本次没等到，任务继续在后台跑，模型可稍后再次查询
         return (
             f"任务 #{task_id} 仍在运行中（已等待 {timeout}s 尚未结束）。"
-            f"稍后可再次调用 bash_wait 查询。"
+            f"稍后可再次调用 background_wait 查询。"
         )
+    return _finish_task(task_id, proc, out_path)
+
+
+def background_status(args: dict, ctx: ToolContext) -> str:
+    """非阻塞查询后台任务状态：运行中立即返回，已完成则顺带收集输出。"""
+    task_id = str(args["task_id"])
     with _BG_LOCK:
-        _BG_TASKS.pop(task_id, None)
-    output = _read_output(out_path)
+        item = _BG_TASKS.get(task_id)
+    if item is None:
+        raise ToolError(f"未知或已完成的后台任务：{task_id}")
+    proc, out_path = item
+    if proc.poll() is None:
+        return f"任务 #{task_id} 仍在运行中。"
+    return _finish_task(task_id, proc, out_path)
+
+
+def background_cancel(args: dict, ctx: ToolContext) -> str:
+    """取消一个后台任务：kill 其进程组并清理临时文件。"""
+    task_id = str(args["task_id"])
+    with _BG_LOCK:
+        item = _BG_TASKS.pop(task_id, None)
+    if item is None:
+        raise ToolError(f"未知或已完成的后台任务：{task_id}")
+    proc, out_path = item
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
     try:
         os.unlink(out_path)
     except OSError:
         pass
-    if not output.strip():
-        output = "（无输出）"
-    return f"任务 #{task_id} 已结束，exit_code: {proc.returncode}\n{output}"
+    return f"已取消后台任务 #{task_id}。"
+
+
+def background_list(args: dict, ctx: ToolContext) -> str:
+    """列出所有仍在注册表中的后台任务及其状态。"""
+    with _BG_LOCK:
+        items = list(_BG_TASKS.items())
+    if not items:
+        return "当前没有正在运行的后台任务。"
+    lines = []
+    for task_id, (proc, _out_path) in items:
+        state = "运行中" if proc.poll() is None else f"已完成(exit_code {proc.returncode})"
+        lines.append(f"  #{task_id}: {state}")
+    return "后台任务列表：\n" + "\n".join(lines)
+
+
+def collect_finished_background_tasks() -> list[tuple[str, int, str]]:
+    """收集所有已完成的后台任务结果并从注册表移除、删除临时文件。
+
+    返回 [(task_id, exit_code, output), ...]，供 agent 在下一轮对话前把完成结果
+    写入消息（推送通知），这样模型无需主动 poll 即可发现任务已完成。
+    """
+    with _BG_LOCK:
+        done = [(tid, item) for tid, item in _BG_TASKS.items() if item[0].poll() is not None]
+        for tid, _ in done:
+            _BG_TASKS.pop(tid, None)
+    return [(tid, proc.returncode, _take_output(path)) for tid, (proc, path) in done]
 
 
 def cleanup_background_tasks() -> None:
@@ -193,7 +263,7 @@ BASH = Tool(
         "在工作目录内非交互执行 shell 命令（stdin 已关闭），返回 stdout/stderr 与退出码；"
         "输出超长会被截断。需要交互输入的程序请改用非交互 flag（如 --yes / -y / --no-input）。"
         "破坏性命令需用户确认。设置 background=true 可把测试/安装等长命令放到后台运行并立即返回任务号，"
-        "配合 bash_wait 查询结果。"
+        "配合 background_wait 查询结果。"
     ),
     parameters={
         "type": "object",
@@ -202,7 +272,7 @@ BASH = Tool(
             "timeout": {"type": "integer", "description": "超时秒数（默认 120）"},
             "background": {
                 "type": "boolean",
-                "description": "true 时后台运行并立即返回任务号，稍后用 bash_wait 查询结果（适合测试/安装等长命令）",
+                "description": "true 时后台运行并立即返回任务号，稍后用 background_wait/background_status/background_cancel/background_list 管理（适合测试/安装等长命令）",
             },
         },
         "required": ["command"],
@@ -211,12 +281,11 @@ BASH = Tool(
 )
 
 
-BASH_WAIT = Tool(
-    name="bash_wait",
+BACKGROUND_WAIT = Tool(
+    name="background_wait",
     description=(
-        "查询或等待一个后台任务（由 bash 的 background=true 启动）的结果。"
-        "会阻塞直到任务结束或超时；超时只表示本次没等到，任务仍在后台运行，可稍后再次调用。"
-        "任务结束后结果与临时文件会被自动清理，再次查询会报错。"
+        "阻塞等待一个后台任务（由 bash 的 background=true 启动）结束并返回其输出。"
+        "超时只表示本次没等到，任务仍在后台运行，可稍后再次调用。任务结束后结果与临时文件会被自动清理。"
     ),
     parameters={
         "type": "object",
@@ -226,5 +295,49 @@ BASH_WAIT = Tool(
         },
         "required": ["task_id"],
     },
-    handler=wait_bash,
+    handler=background_wait,
+)
+
+
+BACKGROUND_STATUS = Tool(
+    name="background_status",
+    description=(
+        "非阻塞查询一个后台任务的状态：仍在运行则立即返回；若已完成则顺带返回输出并清理。"
+        "适合在不阻塞的情况下了解任务进度。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "后台任务编号（bash 返回的任务号）"},
+        },
+        "required": ["task_id"],
+    },
+    handler=background_status,
+)
+
+
+BACKGROUND_CANCEL = Tool(
+    name="background_cancel",
+    description=(
+        "取消一个后台任务：终止其进程并清理临时文件。适合放弃不再需要的后台任务。"
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "task_id": {"type": "string", "description": "后台任务编号（bash 返回的任务号）"},
+        },
+        "required": ["task_id"],
+    },
+    handler=background_cancel,
+)
+
+
+BACKGROUND_LIST = Tool(
+    name="background_list",
+    description=(
+        "列出所有仍在运行（或尚未被收集）的后台任务及其状态，无需参数。"
+        "适合在不确定还有哪些后台任务在跑时使用。"
+    ),
+    parameters={"type": "object", "properties": {}},
+    handler=background_list,
 )

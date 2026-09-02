@@ -18,6 +18,7 @@ from .messages import Conversation, Message, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
 from .skills import Skill, SkillRegistry, build_skills_prompt, skill_prompt
 from .tools import ToolContext, ToolRegistry
+from .tools.bash import cleanup_background_tasks, collect_finished_background_tasks
 from .tools.todo import todos_to_text
 
 SYSTEM_PROMPT = (
@@ -116,6 +117,7 @@ class Agent:
         on_tool_result: Callable[[str, str], None] | None = None,
         verbose: bool = False,
         charter_text: str = "",
+        is_subagent: bool = False,
     ) -> None:
         self.config = config
         self.client = client
@@ -128,6 +130,8 @@ class Agent:
         self.verbose = verbose
         # 项目宪章正文：主 agent 与子 agent 注入系统提示复用（task 委派不丢宪章）
         self.charter_text = charter_text
+        # 是否为子 agent：子 agent 不负责回收/推送后台任务，避免跨 agent 抢占共享注册表
+        self.is_subagent = is_subagent
         # 供 REPL /clear 复用（含 skill 列表的完整系统提示）
         self.system_prompt = conversation.system_prompt
         # todos 归属统一到 conversation：todo_write 写 ctx.todos，注入/持久化读 conversation.todos
@@ -142,21 +146,26 @@ class Agent:
         结束即恢复，不污染后续对话）。skill.read_only 为 True 时，本次 run
         的工具集临时裁剪为只读白名单（禁写文件/bash），结束即恢复。
         """
-        if skill is None:
-            return self._run(task)
-        original = self.conversation.system_prompt
-        original_registry = self.registry
-        injected = original + "\n\n" + skill_prompt(skill)
-        if skill.read_only:
-            injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
-            injected += "你没有写文件或执行 shell 命令的工具。"
-            self.registry = self.registry.read_only()
-        self.conversation.system_prompt = injected
         try:
-            return self._run(task)
+            if skill is None:
+                return self._run(task)
+            original = self.conversation.system_prompt
+            original_registry = self.registry
+            injected = original + "\n\n" + skill_prompt(skill)
+            if skill.read_only:
+                injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
+                injected += "你没有写文件或执行 shell 命令的工具。"
+                self.registry = self.registry.read_only()
+            self.conversation.system_prompt = injected
+            try:
+                return self._run(task)
+            finally:
+                self.conversation.system_prompt = original
+                self.registry = original_registry
         finally:
-            self.conversation.system_prompt = original
-            self.registry = original_registry
+            # 仅主 agent 负责回收遗留后台任务；子 agent 的后台任务由主 agent 结束统一清理
+            if not self.is_subagent:
+                cleanup_background_tasks()
 
     def _run(self, task: str) -> str:
         """run 的核心闭环：决策 → 解析 → 执行 → 回传 → 终止。"""
@@ -166,6 +175,7 @@ class Agent:
 
         for _step in range(self.config.max_steps):
             self._compact_if_needed()
+            self._inject_background_notifications()
             resp = self.client.chat(
                 self._messages_with_todos(),
                 tools=self.registry.to_openai_tools(),
@@ -237,6 +247,22 @@ class Agent:
         else:
             msgs.insert(0, {"role": "system", "content": block})
         return msgs
+
+    def _inject_background_notifications(self) -> None:
+        """把已完成的后台任务结果作为通知写入对话（推送，而非让模型主动轮询）。
+
+        在每轮 LLM 调用前执行：collect_finished_background_tasks 一次性收集并清理
+        所有已完成任务，随后以 user 消息注入，下一轮模型即可直接看到结果。
+        子 agent 不参与注入，避免抢占主 agent 的后台任务结果。
+        """
+        if self.is_subagent:
+            return
+        for task_id, code, output in collect_finished_background_tasks():
+            if not output.strip():
+                output = "（无输出）"
+            self.conversation.add_user(
+                f"【后台任务通知】任务 #{task_id} 已完成（exit_code: {code}）：\n{output}"
+            )
 
     def replace_conversation(self, conv: Conversation) -> None:
         """替换对话（/clear、/continue 时用），并同步 todos 与系统提示引用。"""
@@ -333,6 +359,7 @@ class Agent:
             on_tool_result=self.on_tool_result,
             verbose=self.verbose,
             charter_text=self.charter_text,
+            is_subagent=True,
         )
         try:
             result = sub_agent.run(prompt)
