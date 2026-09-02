@@ -2,7 +2,13 @@
 from __future__ import annotations
 
 from .ask_user import ASK_USER
-from .bash import BASH, BASH_WAIT
+from .bash import (
+    BASH,
+    BACKGROUND_CANCEL,
+    BACKGROUND_LIST,
+    BACKGROUND_STATUS,
+    BACKGROUND_WAIT,
+)
 from .charter import CHARTER
 from .fetch import FETCH
 from .files import APPLY_PATCH, EDIT_FILE, READ_FILE, WRITE_FILE
@@ -12,7 +18,7 @@ from .skill import USE_SKILL
 from .task import TASK
 from .todo import TODO_WRITE
 
-_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, BASH_WAIT, TODO_WRITE, ASK_USER, USE_SKILL, TASK, CHARTER, FETCH)
+_ALL_TOOLS = (READ_FILE, WRITE_FILE, EDIT_FILE, APPLY_PATCH, LIST_DIR, GLOB, GREP, BASH, BACKGROUND_WAIT, BACKGROUND_STATUS, BACKGROUND_CANCEL, BACKGROUND_LIST, TODO_WRITE, ASK_USER, USE_SKILL, TASK, CHARTER, FETCH)
 
 
 def build_default_registry() -> ToolRegistry:
@@ -36,7 +42,10 @@ __all__ = [
     "GLOB",
     "GREP",
     "BASH",
-    "BASH_WAIT",
+    "BACKGROUND_WAIT",
+    "BACKGROUND_STATUS",
+    "BACKGROUND_CANCEL",
+    "BACKGROUND_LIST",
     "TODO_WRITE",
     "ASK_USER",
     "USE_SKILL",

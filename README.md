@@ -12,7 +12,7 @@
 
 - **自研闭环**：决策 → 解析 → 执行 → 回传 → 终止，含输出解析与 JSON 修复、失败重试、超步数/连续失败终止。
 - **上下文管理**：三级压缩（超长工具结果截断 → LLM 语义摘要 → 确定性折叠回退）+ 中文感知的 token 估算。
-- **15 个内置工具**：文件读写、搜索、bash、后台任务、任务清单、子 agent 委托、联网抓取等（见下文）。
+- **18 个内置工具**：文件读写、搜索、bash、后台任务、任务清单、子 agent 委托、联网抓取等（见下文）。
 - **Skill 系统**：11 个内置 skill + 支持自定义 skill，斜杠命令一键调用。
 - **子 agent**：`task` 工具把独立子任务委托给子 agent（独立上下文）。
 - **主动澄清**：`ask_user` 工具——需求/方案不确定时，agent 主动抛出选项让你拍板，而非自行猜测。
@@ -128,7 +128,10 @@ coding-agent [任务] [选项]
 | `apply_patch` | 应用 unified diff 补丁 |
 | `list_dir` / `glob` / `grep` | 目录列举 / glob 查找 / 正则搜索 |
 | `bash` | 非交互执行 shell 命令（危险命令需确认）；`background=true` 可后台运行长命令 |
-| `bash_wait` | 查询/等待后台任务结果（配合 `bash` 的 `background=true`） |
+| `background_wait` | 阻塞等待后台任务结束并返回输出（配合 `bash` 的 `background=true`） |
+| `background_status` | 非阻塞查询后台任务状态 |
+| `background_cancel` | 取消一个后台任务 |
+| `background_list` | 列出所有后台任务及其状态 |
 | `todo_write` | 维护任务清单 |
 | `ask_user` | 需求不确定时向用户提问并给出选项 |
 | `use_skill` | 加载并触发某个 skill |

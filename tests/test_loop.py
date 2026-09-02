@@ -310,3 +310,34 @@ def test_subagent_inherits_charter(tmp_path):
     sub_system = client.calls[0][0]["content"]
     assert "项目宪章" in sub_system
     assert "禁止修改 tests/" in sub_system
+
+
+def test_background_completion_pushed_to_next_turn(tmp_path):
+    # 后台任务完成后，应作为通知被推送进后续某一轮的对话，而非等模型主动 poll
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "bash", '{"command": "echo bgdone", "background": true}')]),
+        resp(tool_calls=[tc("c2", "bash", '{"command": "sleep 0.3"}')]),  # 给后台任务时间完成
+        resp(content="完成", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    result = agent.run("后台跑个任务")
+    assert result == "完成"
+    all_msgs = [m for call in client.calls for m in call]
+    assert any(
+        "后台任务通知" in m.get("content", "") and "bgdone" in m.get("content", "")
+        for m in all_msgs
+    )
+
+
+def test_run_cleans_up_leftover_background_tasks(tmp_path):
+    from coding_agent.tools.bash import _BG_TASKS
+
+    client = ScriptedClient([
+        resp(tool_calls=[tc("c1", "bash", '{"command": "sleep 30", "background": true}')]),
+        resp(content="完成", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    result = agent.run("启动长任务后结束")
+    assert result == "完成"
+    # run 结束后遗留的后台任务应被清理，不留孤儿进程/临时文件
+    assert _BG_TASKS == {}
