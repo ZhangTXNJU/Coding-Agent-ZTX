@@ -188,6 +188,13 @@ def test_build_system_prompt_empty_registry_falls_back():
     assert build_system_prompt(SkillRegistry()) == SYSTEM_PROMPT
 
 
+def test_system_prompt_guides_background_for_servers():
+    # 系统提示须引导模型：永不退出的命令（server/守护/REPL）走 background，避免同步阻塞
+    assert "background=true" in SYSTEM_PROMPT
+    for keyword in ("服务器", "守护进程", "REPL"):
+        assert keyword in SYSTEM_PROMPT
+
+
 def test_build_skills_prompt_empty():
     assert build_skills_prompt(SkillRegistry()) == ""
 

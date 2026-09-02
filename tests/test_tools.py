@@ -216,6 +216,13 @@ def test_run_bash_timeout_raises(ctx):
         BASH.handler({"command": "sleep 1", "timeout": 0.2}, ctx)
 
 
+def test_bash_description_guides_background_for_servers():
+    # 永不自行退出的命令（server/守护/REPL）必须走 background，避免同步阻塞到超时
+    assert "background=true" in BASH.description
+    for keyword in ("服务器", "守护进程", "监听", "REPL"):
+        assert keyword in BASH.description
+
+
 # --------------------------------------------------------------------------- #
 # todo_write
 # --------------------------------------------------------------------------- #

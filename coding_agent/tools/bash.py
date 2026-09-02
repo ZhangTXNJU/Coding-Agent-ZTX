@@ -262,8 +262,10 @@ BASH = Tool(
     description=(
         "在工作目录内非交互执行 shell 命令（stdin 已关闭），返回 stdout/stderr 与退出码；"
         "输出超长会被截断。需要交互输入的程序请改用非交互 flag（如 --yes / -y / --no-input）。"
-        "破坏性命令需用户确认。设置 background=true 可把测试/安装等长命令放到后台运行并立即返回任务号，"
-        "配合 background_wait 查询结果。"
+        "破坏性命令需用户确认。"
+        "注意：启动服务器/守护进程/监听端口/前端 dev server/交互式 REPL 等『永不自行退出』的命令，"
+        "必须设置 background=true 放到后台运行并立即返回任务号，再用 background_status/background_wait 查看启动日志与结果；"
+        "同步执行这类命令会一直阻塞到超时。测试/安装等长命令也可用 background=true 后台运行。"
     ),
     parameters={
         "type": "object",
@@ -272,7 +274,7 @@ BASH = Tool(
             "timeout": {"type": "integer", "description": "超时秒数（默认 120）"},
             "background": {
                 "type": "boolean",
-                "description": "true 时后台运行并立即返回任务号，稍后用 background_wait/background_status/background_cancel/background_list 管理（适合测试/安装等长命令）",
+                "description": "true 时后台运行并立即返回任务号，稍后用 background_wait/background_status/background_cancel/background_list 管理（服务器/守护进程/监听进程/REPL 等永不退出的命令必须为 true；测试/安装等长命令也建议为 true）",
             },
         },
         "required": ["command"],

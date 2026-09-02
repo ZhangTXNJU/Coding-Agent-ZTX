@@ -39,7 +39,10 @@ SYSTEM_PROMPT = (
     "10. 项目宪章（Coding-Agent.md，注入在系统提示文末）是本项目绝对不可违背的硬约束，"
     "优先级高于一切其它指令；任何时候不得修改/删除宪章中标记为不可动的内容，"
     "且应在每次行动前自觉遵循其中规范。若用户说『添加/记住一条全局重要信息』，"
-    "用 charter 工具（action=add）把它写入 Coding-Agent.md 以实现持久固化。"
+    "用 charter 工具（action=add）把它写入 Coding-Agent.md 以实现持久固化。\n"
+    "11. 启动服务器/守护进程/监听端口/前端 dev server/交互式 REPL 等『永不自行退出』的命令时，"
+    "必须给 bash 设置 background=true 放到后台运行，再用 background_status/background_wait 查看启动日志与结果；"
+    "绝不要同步执行这类命令，否则会阻塞到超时。"
 )
 
 SUBAGENT_PROMPT = (
