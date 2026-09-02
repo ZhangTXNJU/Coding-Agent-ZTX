@@ -18,7 +18,7 @@ from .messages import Conversation, Message, messages_to_text, truncate_text
 from .parsing import parse_tool_arguments
 from .skills import Skill, SkillRegistry, build_skills_prompt, skill_prompt
 from .tools import ToolContext, ToolRegistry
-from .tools.bash import cleanup_background_tasks, collect_finished_background_tasks
+from .tools.bash import collect_finished_background_tasks
 from .tools.todo import todos_to_text
 
 SYSTEM_PROMPT = (
@@ -130,7 +130,7 @@ class Agent:
         self.verbose = verbose
         # 项目宪章正文：主 agent 与子 agent 注入系统提示复用（task 委派不丢宪章）
         self.charter_text = charter_text
-        # 是否为子 agent：子 agent 不负责回收/推送后台任务，避免跨 agent 抢占共享注册表
+        # 是否为子 agent：子 agent 不参与收集/推送后台任务结果，避免抢占主 agent 的共享注册表
         self.is_subagent = is_subagent
         # 供 REPL /clear 复用（含 skill 列表的完整系统提示）
         self.system_prompt = conversation.system_prompt
@@ -145,27 +145,25 @@ class Agent:
         skill 非空时，把其执行指引临时注入系统提示（仅本次 run 生效，
         结束即恢复，不污染后续对话）。skill.read_only 为 True 时，本次 run
         的工具集临时裁剪为只读白名单（禁写文件/bash），结束即恢复。
+
+        注意：run 结束不回收后台任务——后台任务跨对话轮次存活，由 CLI 在整个
+        会话结束（进程退出）时统一清理（见 cli.main 的 finally）。
         """
+        if skill is None:
+            return self._run(task)
+        original = self.conversation.system_prompt
+        original_registry = self.registry
+        injected = original + "\n\n" + skill_prompt(skill)
+        if skill.read_only:
+            injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
+            injected += "你没有写文件或执行 shell 命令的工具。"
+            self.registry = self.registry.read_only()
+        self.conversation.system_prompt = injected
         try:
-            if skill is None:
-                return self._run(task)
-            original = self.conversation.system_prompt
-            original_registry = self.registry
-            injected = original + "\n\n" + skill_prompt(skill)
-            if skill.read_only:
-                injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
-                injected += "你没有写文件或执行 shell 命令的工具。"
-                self.registry = self.registry.read_only()
-            self.conversation.system_prompt = injected
-            try:
-                return self._run(task)
-            finally:
-                self.conversation.system_prompt = original
-                self.registry = original_registry
+            return self._run(task)
         finally:
-            # 仅主 agent 负责回收遗留后台任务；子 agent 的后台任务由主 agent 结束统一清理
-            if not self.is_subagent:
-                cleanup_background_tasks()
+            self.conversation.system_prompt = original
+            self.registry = original_registry
 
     def _run(self, task: str) -> str:
         """run 的核心闭环：决策 → 解析 → 执行 → 回传 → 终止。"""
