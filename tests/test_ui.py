@@ -144,3 +144,29 @@ def test_complete_while_typing_is_dynamic_not_constant():
     cwt = ui._pt_session.complete_while_typing
     assert isinstance(cwt, Condition)  # 动态过滤器，按输入内容决定是否开启
     assert cwt() is False  # 无活跃 app（纯测试环境）时关闭 → 不预留菜单空间
+
+
+# --------------------------------------------------------------------------- #
+# Markdown 流式渲染
+# --------------------------------------------------------------------------- #
+
+
+def test_stream_text_renders_inline_markdown():
+    # 非终端（record）下 stream_text 只累积，end_stream 时一次性渲染为 Markdown
+    console = Console(record=True, width=80)
+    ui = UI(console=console)
+    ui.stream_text("**加粗** 与 `行内代码`")
+    ui.end_stream()
+    text = console.export_text()
+    assert "加粗" in text and "行内代码" in text
+    assert "**" not in text and "`" not in text  # 原始 markdown 符号被渲染掉
+
+
+def test_stream_text_renders_code_block():
+    console = Console(record=True, width=80)
+    ui = UI(console=console)
+    ui.stream_text("```python\nprint(1)\n```")
+    ui.end_stream()
+    text = console.export_text()
+    assert "print(1)" in text
+    assert "```" not in text  # 代码围栏被渲染成代码块盒子

@@ -8,6 +8,8 @@ import json
 
 from rich.color import Color
 from rich.console import Console
+from rich.live import Live
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.style import Style
 from rich.text import Text
@@ -149,6 +151,9 @@ class UI:
         self.verbose = verbose
         self._skills: list = []  # 斜杠补全用的 skill 列表（由 cli 绑定）
         self._ctx = None  # ToolContext 引用，实时任务面板据此读取 todos
+        # markdown 流式渲染状态：累积最终回答文本，终端下用 Live 增量重渲染
+        self._md_live: Live | None = None
+        self._md_buffer: str = ""
         # prompt_toolkit 输入会话：常驻 ❯ 提示符 + 上下横线（未安装时降级）
         self._pt_session = None
         if _HAS_PROMPT_TOOLKIT:
@@ -190,11 +195,39 @@ class UI:
         self.console.print()
 
     def stream_text(self, chunk: str) -> None:
-        """逐 token 流式输出（不解析 markup，避免代码片段中的字符被误读）。"""
-        self.console.print(chunk, end="", markup=False, soft_wrap=True)
+        """逐 token 流式输出：累积为 Markdown，终端下用 Live 增量重渲染。
+
+        相比直接打印原始 chunk，这里把 **粗体**、`行内代码`、``` 代码块、# 标题、
+        列表、表格等 Markdown 语法渲染成真正的终端样式（加粗/高亮/配色），而非
+        带 * 号的纯文本。非终端（重定向/测试）只累积，待 end_stream() 一次性渲染。
+        """
+        self._md_buffer += chunk
+        if not self.console.is_terminal:
+            return
+        if self._md_live is None:
+            self._md_live = Live(Markdown(""), console=self.console, refresh_per_second=12)
+            self._md_live.start()
+        self._md_live.update(Markdown(self._md_buffer))
+
+    def _end_stream(self) -> None:
+        """结束当前 markdown 流式渲染：渲染最后一帧并复位状态（幂等）。"""
+        if self._md_live is not None:
+            self._md_live.stop()
+            self._md_live = None
+            self._md_buffer = ""
+        elif self._md_buffer:
+            # 非终端路径：缓冲的完整回答在此一次性渲染
+            self.console.print(Markdown(self._md_buffer))
+            self._md_buffer = ""
+
+    def end_stream(self) -> None:
+        """结束当前流式回答并另起一行（cli 在每次 agent.run 返回后调用）。"""
+        self._end_stream()
+        self.console.print()
 
     def tool_call(self, name: str, args: dict) -> None:
         """渲染一次工具调用（面板展示工具名 + 参数）。"""
+        self._end_stream()
         if name in ("todo_write", "ask_user"):
             # todo_write 改由 tool_result 渲染；ask_user 由下方交互提示自渲染，均不重复刷 JSON
             return
@@ -208,6 +241,7 @@ class UI:
 
     def tool_result(self, name: str, result: str) -> None:
         """渲染工具结果（截断展示，避免刷屏）。"""
+        self._end_stream()
         if name == "todo_write" and self._ctx is not None:
             self.render_todos(self._ctx.todos)
             return
@@ -263,9 +297,11 @@ class UI:
         )
 
     def info(self, text: str) -> None:
+        self._end_stream()
         self.console.print(text, style="dim")
 
     def error(self, text: str) -> None:
+        self._end_stream()
         self.console.print(f"[bold red]错误[/] {text}")
 
     def render_sessions(self, sessions) -> None:
@@ -338,6 +374,7 @@ class UI:
 
     def prompt(self) -> str:
         """读取一行输入：常驻 ❯ 提示符 + 上下横线（prompt_toolkit）。"""
+        self._end_stream()
         if self._pt_session is not None:
             self.console.print("─" * (self.console.width or 80), style="dim")
             return self._pt_session.prompt(

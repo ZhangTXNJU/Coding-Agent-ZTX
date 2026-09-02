@@ -140,7 +140,7 @@ def _run(config: AgentConfig, args) -> int:
         except AgentError as exc:
             ui.error(str(exc))
             return 1
-        ui.console.print()
+        ui.end_stream()
         _save(ui, agent, config, session_id, save_session)
         return 0
 
@@ -193,7 +193,7 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
                 agent.run(task, skill=skill)
             except AgentError as exc:
                 ui.error(str(exc))
-            ui.console.print()
+            ui.end_stream()
             session_id = _save(ui, agent, config, session_id, save_session)
             continue
         if line.startswith("/skill"):
@@ -226,7 +226,7 @@ def _repl(ui, agent: object, config: AgentConfig, session_id: str | None, save_s
             agent.run(line)
         except AgentError as exc:
             ui.error(str(exc))
-        ui.console.print()
+        ui.end_stream()
         session_id = _save(ui, agent, config, session_id, save_session)
 
     return 0
