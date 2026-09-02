@@ -16,7 +16,16 @@ def use_skill(args: dict, ctx: ToolContext) -> str:
     if skill is None:
         available = "、".join(ctx.skills.names()) or "（无）"
         raise ToolError(f"skill 不存在：{name!r}。可用 skill：{available}")
-    return skill_prompt(skill)
+    # 只读 skill 立即进入只读模式：后续步骤的工具集被主循环裁剪为只读白名单（禁写文件/bash）。
+    # 非只读 skill（如 implement）则退出只读模式，恢复完整工具集。
+    ctx.read_only = skill.read_only
+    prompt = skill_prompt(skill)
+    if skill.read_only:
+        prompt += (
+            "\n\n【只读模式已启用】该 skill 只做读取/规划，本阶段禁止写文件、执行 shell 命令；"
+            "你没有这些工具，请勿尝试调用。"
+        )
+    return prompt
 
 
 USE_SKILL = Tool(
