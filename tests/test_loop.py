@@ -329,8 +329,9 @@ def test_background_completion_pushed_to_next_turn(tmp_path):
     )
 
 
-def test_run_cleans_up_leftover_background_tasks(tmp_path):
-    from coding_agent.tools.bash import _BG_TASKS
+def test_run_keeps_background_tasks_alive(tmp_path):
+    # 后台任务跨 run() 存活：run 结束不回收，交由会话结束时统一清理
+    from coding_agent.tools.bash import _BG_TASKS, cleanup_background_tasks
 
     client = ScriptedClient([
         resp(tool_calls=[tc("c1", "bash", '{"command": "sleep 30", "background": true}')]),
@@ -339,5 +340,35 @@ def test_run_cleans_up_leftover_background_tasks(tmp_path):
     agent = make_agent(tmp_path, client)
     result = agent.run("启动长任务后结束")
     assert result == "完成"
-    # run 结束后遗留的后台任务应被清理，不留孤儿进程/临时文件
+    # run 结束后任务仍在注册表中（不再随 run 回收）
+    assert len(_BG_TASKS) == 1
+    cleanup_background_tasks()  # 测试自身清理，模拟会话结束
     assert _BG_TASKS == {}
+
+
+def test_background_task_result_pushed_across_runs(tmp_path):
+    # 跨轮次推送：第一轮启动的后台任务，在第二轮 run 开头完成并被注入为通知
+    import time
+
+    from coding_agent.tools.bash import _BG_TASKS, cleanup_background_tasks
+
+    client = ScriptedClient([
+        # 第一轮：启动后台任务 → 结束
+        resp(tool_calls=[tc("c1", "bash", '{"command": "sleep 0.3; echo cross_turn", "background": true}')]),
+        resp(content="已启动", tool_calls=None, finish_reason="stop"),
+        # 第二轮：通知注入后模型作答
+        resp(content="收到通知", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    assert agent.run("后台跑一个任务") == "已启动"
+    assert len(_BG_TASKS) == 1  # 任务存活，未随 run 结束被回收
+
+    time.sleep(0.5)  # 等后台任务结束（0.3s 的 sleep + echo）
+
+    assert agent.run("看看后台任务好了没") == "收到通知"
+    # 第二轮开头，后台任务结果作为通知注入进对话
+    assert any(
+        "后台任务通知" in m.get("content", "") and "cross_turn" in m.get("content", "")
+        for call in client.calls for m in call
+    )
+    cleanup_background_tasks()

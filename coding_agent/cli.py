@@ -54,7 +54,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    return _run(config, args)
+    try:
+        return _run(config, args)
+    finally:
+        # 会话结束（单次任务跑完 / REPL 退出 / 异常中断）统一回收后台长任务，
+        # 避免脱离进程组的孤儿进程与临时日志文件泄漏。后台任务本身跨对话轮次存活。
+        from .tools.bash import cleanup_background_tasks
+
+        cleanup_background_tasks()
 
 
 def _build(config: AgentConfig, args):
