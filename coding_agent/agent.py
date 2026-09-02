@@ -144,26 +144,27 @@ class Agent:
 
         skill 非空时，把其执行指引临时注入系统提示（仅本次 run 生效，
         结束即恢复，不污染后续对话）。skill.read_only 为 True 时，本次 run
-        的工具集临时裁剪为只读白名单（禁写文件/bash），结束即恢复。
+        进入只读模式（ctx.read_only=True），工具集临时裁剪为只读白名单
+        （禁写文件/bash），结束即恢复。
+
+        只读模式由 ctx.read_only 统一承载：slash 命令（本方法）与模型自行调用
+        use_skill 都会设置它，主循环据此裁剪工具集并注入只读提示。
 
         注意：run 结束不回收后台任务——后台任务跨对话轮次存活，由 CLI 在整个
         会话结束（进程退出）时统一清理（见 cli.main 的 finally）。
         """
-        if skill is None:
-            return self._run(task)
-        original = self.conversation.system_prompt
-        original_registry = self.registry
-        injected = original + "\n\n" + skill_prompt(skill)
-        if skill.read_only:
-            injected += "\n\n【只读模式】本阶段只允许读取/查看，禁止修改任何项目代码或文件；"
-            injected += "你没有写文件或执行 shell 命令的工具。"
-            self.registry = self.registry.read_only()
-        self.conversation.system_prompt = injected
+        original_prompt = self.conversation.system_prompt
+        original_read_only = self.ctx.read_only
+        if skill is not None:
+            self.conversation.system_prompt = original_prompt + "\n\n" + skill_prompt(skill)
+        # 每个 run 从明确的模式开始：普通任务=写模式，skill 任务=按 skill.read_only。
+        # 不复用上一轮（use_skill 触发）遗留的只读状态，避免污染后续对话轮次。
+        self.ctx.read_only = bool(skill and skill.read_only)
         try:
             return self._run(task)
         finally:
-            self.conversation.system_prompt = original
-            self.registry = original_registry
+            self.conversation.system_prompt = original_prompt
+            self.ctx.read_only = original_read_only
 
     def _run(self, task: str) -> str:
         """run 的核心闭环：决策 → 解析 → 执行 → 回传 → 终止。"""
@@ -176,7 +177,7 @@ class Agent:
             self._inject_background_notifications()
             resp = self.client.chat(
                 self._messages_with_todos(),
-                tools=self.registry.to_openai_tools(),
+                tools=self._active_registry().to_openai_tools(),
                 on_text=self.on_text,
             )
 
@@ -231,20 +232,40 @@ class Agent:
         return summary
 
     def _messages_with_todos(self) -> list[dict]:
-        """构建发给模型的完整消息：在 system 消息里注入当前任务清单。
+        """构建发给模型的完整消息：在 system 消息里注入当前任务清单与只读模式提示。
 
-        todo 状态每轮重新渲染（读 conversation.todos），且独立于 messages 历史，
-        因此不会被 compact() 折叠丢失——对照 Claude Code 的持续注入方案。
+        todo 状态与只读提示每轮重新渲染（读 conversation.todos / ctx.read_only），
+        且独立于 messages 历史，因此不会被 compact() 折叠丢失——对照 Claude Code 的持续注入方案。
         """
         msgs = self.conversation.to_openai()
-        block = todos_to_text(self.conversation.todos)
-        if not block:
+        blocks: list[str] = []
+        todo_block = todos_to_text(self.conversation.todos)
+        if todo_block:
+            blocks.append(todo_block)
+        if self.ctx.read_only:
+            blocks.append(
+                "【只读模式】当前阶段只允许读取/查看与规划，禁止修改任何项目代码或文件、"
+                "禁止执行 shell 命令。你没有写文件或执行命令的工具，不要尝试调用它们；"
+                "只使用 read_file / list_dir / glob / grep / todo_write / ask_user。"
+            )
+        if not blocks:
             return msgs
+        block = "\n\n".join(blocks)
         if msgs and msgs[0]["role"] == "system":
             msgs[0] = dict(msgs[0], content=msgs[0]["content"] + "\n\n" + block)
         else:
             msgs.insert(0, {"role": "system", "content": block})
         return msgs
+
+    def _active_registry(self) -> ToolRegistry:
+        """当前生效的工具集：只读模式下裁剪为只读白名单（禁写文件/bash）。
+
+        既是「发给模型的工具清单」的来源，也是「工具执行」的守卫——只读模式下
+        即使模型幻觉调用了写工具，也会因「未知工具」被拒，双重兜底。
+        """
+        if self.ctx.read_only:
+            return self.registry.read_only()
+        return self.registry
 
     def _inject_background_notifications(self) -> None:
         """把已完成的后台任务结果作为通知写入对话（推送，而非让模型主动轮询）。
@@ -316,7 +337,7 @@ class Agent:
 
         ok = True
         try:
-            result = self.registry.run(tc.name, args, self.ctx)
+            result = self._active_registry().run(tc.name, args, self.ctx)
         except ToolError as exc:
             result, ok = f"错误：{exc}", False
         except Exception as exc:  # 兜底，任何异常都回传而非崩溃

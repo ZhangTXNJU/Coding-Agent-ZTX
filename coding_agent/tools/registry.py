@@ -34,6 +34,9 @@ class ToolContext:
     skills: SkillRegistry = field(default_factory=SkillRegistry)
     # 子 agent 委托回调（由 agent 主循环注入）：接收自包含 prompt，返回子 agent 最终结论。
     spawn_subagent: Callable[[str], str] | None = None
+    # 只读模式：True 时主循环把工具集裁剪为只读白名单（禁写文件/bash）。
+    # 由只读 skill 触发（use_skill 或 run(skill=...)），跨步骤持久、run 结束复位。
+    read_only: bool = False
 
 
 @dataclass

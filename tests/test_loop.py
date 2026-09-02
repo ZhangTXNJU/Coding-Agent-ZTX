@@ -273,6 +273,42 @@ def test_read_only_skill_exposes_only_read_tools_to_model(tmp_path):
     assert "write_file" not in exposed and "bash" not in exposed
 
 
+def test_use_skill_read_only_blocks_writes_and_resets(tmp_path):
+    from coding_agent.skills import Skill, SkillRegistry
+
+    class RecordingClient(ScriptedClient):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.tools_history: list[list[dict] | None] = []
+
+        def chat(self, messages, tools=None, on_text=None):
+            self.tools_history.append(tools)
+            return super().chat(messages, tools=tools, on_text=on_text)
+
+    (tmp_path / "foo.txt").write_text("hi\n")
+    client = RecordingClient([
+        resp(tool_calls=[tc("c1", "use_skill", '{"name": "plan"}')]),  # 模型自行加载只读 skill
+        resp(tool_calls=[tc("c2", "write_file", '{"path": "bar.txt", "content": "x"}')]),  # 写工具应被禁
+        resp(content="规划完成", tool_calls=None, finish_reason="stop"),
+    ])
+    agent = make_agent(tmp_path, client)
+    reg = SkillRegistry()
+    reg.register(Skill("plan", "产出实现计划", "只读规划。", "builtin", read_only=True))
+    agent.ctx.skills = reg
+
+    result = agent.run("做规划")
+
+    assert result == "规划完成"
+    # 加载只读 skill 后，模型看到的工具集被裁剪为只读白名单
+    exposed = {t["function"]["name"] for t in client.tools_history[1]}
+    assert exposed == {"read_file", "list_dir", "glob", "grep", "todo_write", "ask_user"}
+    assert "write_file" not in exposed and "bash" not in exposed
+    # write_file 因「未知工具」被拒，未落盘
+    assert not (tmp_path / "bar.txt").exists()
+    # run 结束只读状态复位，不污染后续对话轮次
+    assert agent.ctx.read_only is False
+
+
 def test_ask_user_feeds_answer_back_to_model(tmp_path):
     from coding_agent.tools.ask_user import format_ask_user_result
 
