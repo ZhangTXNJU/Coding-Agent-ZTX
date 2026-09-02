@@ -170,3 +170,51 @@ def test_stream_text_renders_code_block():
     text = console.export_text()
     assert "print(1)" in text
     assert "```" not in text  # 代码围栏被渲染成代码块盒子
+
+
+# --------------------------------------------------------------------------- #
+# 高开销区块的流式降级（方案 B：代码围栏 / 表格内暂停每帧全量重排）
+# --------------------------------------------------------------------------- #
+
+
+def test_open_fence_blocked_parity():
+    assert UI._open_fence_blocked("```python\nprint(1)") is True      # 未闭合
+    assert UI._open_fence_blocked("```python\nprint(1)\n```") is False  # 已闭合
+    assert UI._open_fence_blocked("a\n```\nb\n```\nc") is False        # 中段闭合后为普通文本
+    assert UI._open_fence_blocked("plain text") is False
+
+
+def test_open_table_blocked_mid_body():
+    mid = "前文\n\n| 列A | 列B |\n|---|------|\n| x | y |"
+    closed = mid + "\n\n"
+    normal = "表格之后的普通正文内容文字。"
+    assert UI._open_table_blocked(mid) is True      # 表体未收尾 → 视为重排中
+    assert UI._open_table_blocked(closed) is False  # 空行收尾 → 已定稿
+    assert UI._open_table_blocked(normal) is False
+
+
+def test_stream_text_skips_live_update_in_fence(monkeypatch):
+    """身处代码围栏内时不应逐 token 触发 Live 全量重排（只累积 + 延后补画）。"""
+    from coding_agent import ui as ui_mod
+
+    calls = []
+    class FakeLive:
+        def __init__(self, renderable, console=None, refresh_per_second=12):
+            self.renderable = renderable
+        def start(self): pass
+        def update(self, renderable): calls.append(1)
+        def stop(self): calls.append("stop")
+
+    monkeypatch.setattr(ui_mod, "Live", FakeLive)
+    console = Console(force_terminal=True, width=80)
+    ui = UI(console=console)
+    # 关键：以整段进入围栏（首个 token 就带 unclosed fence）→ 首帧 start 后应不再每 token update
+    for tok in ["```python\n", "for i in range", "(3):\n", "    print(i)\n", "```"]:
+        ui.stream_text(tok)
+    # 进入围栏期间 update 不应增长（fence 未闭合），结束闭合后应有补帧
+    updates_before_close = calls.count(1)
+    ui.stream_text("\n")  # 闭合后的空行，离开重排区
+    updates_after = calls.count(1)
+    assert updates_after > updates_before_close  # 离开围栏时补画了一次
+    ui.end_stream()
+    assert calls.count("stop") >= 1
