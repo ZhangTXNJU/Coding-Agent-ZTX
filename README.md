@@ -11,11 +11,13 @@
 ## 核心特性
 
 - **自研闭环**：决策 → 解析 → 执行 → 回传 → 终止，含输出解析与 JSON 修复、失败重试、超步数/连续失败终止。
-- **上下文管理**：三级压缩（超长工具结果截断 → LLM 语义摘要 → 确定性折叠回退）+ 中文感知的 token 估算。
+- **上下文管理**：三级压缩（超长工具结果截断 → LLM 语义摘要 → 确定性折叠回退）+ CJK 感知的 token 估算，预算默认 900K（DeepSeek-V4 1M 窗口的 90%）。
 - **18 个内置工具**：文件读写、搜索、bash、后台任务、任务清单、子 agent 委托、联网抓取等（见下文）。
 - **Skill 系统**：11 个内置 skill + 支持自定义 skill，斜杠命令一键调用。
-- **子 agent**：`task` 工具把独立子任务委托给子 agent（独立上下文）。
+- **子 agent**：`task` 工具把独立子任务委托给子 agent（独立上下文、继承宪章、失败结构化回传）。
+- **后台长任务**：`bash` 的 `background=true` 把长命令放到独立进程后台跑，跨对话轮次存活、完成后主动推送结果，支持查询/取消/列表。
 - **主动澄清**：`ask_user` 工具——需求/方案不确定时，agent 主动抛出选项让你拍板，而非自行猜测。
+- **流式渲染**：最终回答用 Markdown 实时渲染（代码块语法高亮、标题/表格/列表），配实时任务清单面板。
 - **项目宪章**：工作目录下的 `Coding-Agent.md` 作为最高优先级硬约束注入，跨会话持久。
 - **只读阶段**：`specify` / `clarify` / `plan` / `tasks` 等需求规划 skill 自动禁用写文件与 bash。
 - **会话持久化**：历史存 JSONL，支持续跑（`/continue`、`--continue`）。
@@ -197,7 +199,7 @@ coding_agent/          # Python 包
 ├── session.py         # 会话持久化与续跑
 ├── skills.py          # skill 系统（内置 + 自定义）
 ├── charter.py         # 项目宪章加载
-├── ui.py              # rich 流式渲染、diff 展示、审批提示
+├── ui.py              # rich 流式 Markdown 渲染、实时任务面板、审批/提问交互
 ├── llm/               # OpenAI 兼容客户端 + 提供商端点表
 └── tools/             # 工具定义与本地执行（files/search/bash/todo/ask_user/...）
 
@@ -214,7 +216,7 @@ pip install -e ".[dev]"   # 安装 pytest
 pytest                    # 运行全部测试
 ```
 
-测试覆盖主循环、工具执行、上下文压缩、会话持久化、skill、子 agent、SSRF 防护等，用 mock LLM 响应离线驱动完整多轮闭环。
+共 240+ 个测试用例，覆盖主循环、工具执行、上下文压缩、会话持久化、skill、子 agent、后台任务、SSRF 防护等，用 mock LLM 响应离线驱动完整多轮闭环。
 
 ---
 
@@ -229,7 +231,11 @@ pytest                    # 运行全部测试
 | `CODING_AGENT_MODEL` | 模型名 | 提供商默认 |
 | `CODING_AGENT_BASE_URL` | OpenAI 兼容端点 | 提供商默认 |
 | `CODING_AGENT_MAX_STEPS` | 最大循环步数 | `30` |
+| `CODING_AGENT_MAX_FAILURES` | 连续失败中止阈值 | `3` |
 | `CODING_AGENT_COMMAND_TIMEOUT` | bash 超时（秒） | `120` |
+| `CODING_AGENT_MAX_TOKENS` | 上下文预算（估算 token） | `900000` |
+| `CODING_AGENT_MAX_TOOL_RESULT_CHARS` | 单次工具结果截断上限 | `20000` |
+| `CODING_AGENT_SUBAGENT_MAX_STEPS` | 子 agent 最大步数 | `15` |
 | `CODING_AGENT_AUTO_APPROVE` | 跳过危险命令确认 | 关闭 |
 
 支持的内置提供商：`deepseek`（默认）、`qwen`、`glm`、`kimi`、`minimax`，也可用 `--base-url` 对接任意 OpenAI 兼容服务。
