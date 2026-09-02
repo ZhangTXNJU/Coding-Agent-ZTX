@@ -35,7 +35,7 @@ class AgentConfig:
     max_steps: int = 30
     max_failures: int = 3
     command_timeout: int = 120
-    max_tokens: int = 48_000  # 上下文预算（估算 token），默认给 DeepSeek 64K 留出余量
+    max_tokens: int = 900_000  # 上下文预算（估算 token），默认取 DeepSeek-V4 1M 窗口的 90%
     max_tool_result_chars: int = 20_000  # 单次工具结果写入上下文前的截断上限
     subagent_max_steps: int = 15  # 子 agent 的最大循环步数（比主循环小，防失控）
     auto_approve: bool = False
@@ -72,7 +72,7 @@ def load_config(**overrides) -> AgentConfig:
         "max_steps": _int_env("CODING_AGENT_MAX_STEPS", 30),
         "max_failures": _int_env("CODING_AGENT_MAX_FAILURES", 3),
         "command_timeout": _int_env("CODING_AGENT_COMMAND_TIMEOUT", 120),
-        "max_tokens": _int_env("CODING_AGENT_MAX_TOKENS", 48_000),
+        "max_tokens": _int_env("CODING_AGENT_MAX_TOKENS", 900_000),
         "max_tool_result_chars": _int_env("CODING_AGENT_MAX_TOOL_RESULT_CHARS", 20_000),
         "subagent_max_steps": _int_env("CODING_AGENT_SUBAGENT_MAX_STEPS", 15),
         "auto_approve": _env("CODING_AGENT_AUTO_APPROVE").lower() in ("1", "true", "yes"),

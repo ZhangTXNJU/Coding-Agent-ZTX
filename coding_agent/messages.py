@@ -54,7 +54,7 @@ class Conversation:
 
     system_prompt: str = ""
     messages: list[Message] = field(default_factory=list)
-    max_tokens: int = 96_000
+    max_tokens: int = 900_000
     summary: str = ""
     todos: list = field(default_factory=list)  # 任务清单：跨步持久 + 随会话落盘，压缩不触及
 

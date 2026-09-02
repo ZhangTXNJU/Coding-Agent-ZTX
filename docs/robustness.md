@@ -60,7 +60,7 @@
 
 主循环每步调用 `client.chat` 前先执行 `_compact_if_needed()`，用 `needs_compaction()`（估算 token 与 `max_tokens` 对比）做**前置**检查，超预算即触发压缩，而不是等模型报错。
 
-预算 `max_tokens` 从配置读入（默认 48_000，给 DeepSeek 64K 留余量），并在 `run()` 开始时写入 `conversation.max_tokens`。
+预算 `max_tokens` 从配置读入（默认 900_000，取 DeepSeek-V4 1M 窗口的 90%），并在 `run()` 开始时写入 `conversation.max_tokens`。
 
 ### 5. 自动压缩（三级，`messages.py` + `agent.py`）
 
@@ -82,7 +82,7 @@ _compact_if_needed():
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
-| `CODING_AGENT_MAX_TOKENS` | `48000` | 上下文预算（估算 token） |
+| `CODING_AGENT_MAX_TOKENS` | `900000` | 上下文预算（估算 token） |
 | `CODING_AGENT_MAX_TOOL_RESULT_CHARS` | `20000` | 单次工具结果写入上下文前的截断上限 |
 
 ## 五、测试
