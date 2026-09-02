@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from rich.color import Color
 from rich.console import Console
@@ -154,6 +155,10 @@ class UI:
         # markdown 流式渲染状态：累积最终回答文本，终端下用 Live 增量重渲染
         self._md_live: Live | None = None
         self._md_buffer: str = ""
+        # 方案 B：身处「代码围栏/表格」等重排代价高的区块时，暂停逐 token 的
+        # Live 全量重排（这些区每帧都要重算 Syntax 高亮 / Table 列宽换行）。
+        # 只在进入/离开新区块边界或 end_stream 时才补画，避免整套重排抖动。
+        self._md_heavy_deferred = False
         # prompt_toolkit 输入会话：常驻 ❯ 提示符 + 上下横线（未安装时降级）
         self._pt_session = None
         if _HAS_PROMPT_TOOLKIT:
@@ -194,12 +199,62 @@ class UI:
             self.console.print(meta, style="dim", justify="center")
         self.console.print()
 
+    # -- Markdown 流式渲染：重排代价高的区块降级 -------------------------- #
+
+    @staticmethod
+    def _open_fence_blocked(buffer: str) -> bool:
+        """是否处于未闭合的代码围栏内（首尾为一对 ``` 或 ~~~ 之间）。"""
+        in_fence = False
+        for line in buffer.split("\n"):
+            s = line.strip()
+            if s.startswith("~~~") or s.startswith("```"):
+                # 围栏以行首连续 3 个反引号/波浪号为界
+                if len(s) >= 3 and s[:3] in ("```", "~~~"):
+                    in_fence = not in_fence
+        return in_fence
+
+    @staticmethod
+    def _open_table_blocked(buffer: str) -> bool:
+        """是否处于「尚未收尾、可能还在追加行」的 markdown 表体。
+
+        界定：从缓冲末尾倒推，找到一个空行作为分界，把「最后一个非空段」
+        视作还在形成中的区块。若该段的剩余内容仍是连续的表行/分隔行，
+        且尚未被空行或非表内容切断，则认为表格可能继续接收新行 → 重排代价高。
+        """
+        # 只考察最后一个被空行隔开的“开放段”；缓冲若以空行结尾则已闭合。
+        if buffer.endswith("\n\n") or buffer.endswith("\n \n"):
+            return False
+        head, _, tail = buffer.rpartition("\n\n")
+        if "\n\n" not in buffer:
+            # 整段只有一块：尚无空行，仍需考察
+            head, tail = "", buffer
+        lines = tail.split("\n")
+        # 非空行才参与判断（尾空行视作已结束）
+        non_empty = [ln for ln in lines if ln.strip() != ""]
+        if not non_empty:
+            return False
+        # 是否为“表格风格”的行（行首或含竖线分隔）
+        def is_row(ln: str) -> bool:
+            s = ln.strip()
+            return s.startswith("|") or (s.count("|") >= 1 and "|" in s)
+        seg_rows = is_row(non_empty[-1])
+        if not seg_rows:
+            return False
+        # 段内若含有表头分隔行（|-...|），或仅表头本身，都算重排中
+        has_sep = any(re.match(r"^\s*\|?[\s:|-]+\|?\s*$", ln) and "-" in ln for ln in non_empty)
+        # 只要最后若干行皆为表格行且段内出现过“|…|”结构即可判为重排中
+        return has_sep or len(non_empty) >= 2
+
     def stream_text(self, chunk: str) -> None:
         """逐 token 流式输出：累积为 Markdown，终端下用 Live 增量重渲染。
 
         相比直接打印原始 chunk，这里把 **粗体**、`行内代码`、``` 代码块、# 标题、
         列表、表格等 Markdown 语法渲染成真正的终端样式（加粗/高亮/配色），而非
         带 * 号的纯文本。非终端（重定向/测试）只累积，待 end_stream() 一次性渲染。
+
+        优化（方案 B）：代码围栏、数据表格这类多行、需逐帧重算布局的区块，
+        在尚未描完前暂停每 token 的全量 Live 重排；只在离开该区块或结束时补画，
+        避免整套 Markdown 布局（Syntax 高亮 / Table 列宽换行）在高频下反复抖动。
         """
         self._md_buffer += chunk
         if not self.console.is_terminal:
@@ -207,18 +262,33 @@ class UI:
         if self._md_live is None:
             self._md_live = Live(Markdown(""), console=self.console, refresh_per_second=12)
             self._md_live.start()
+        deferred = (
+            self._open_fence_blocked(self._md_buffer)
+            or self._open_table_blocked(self._md_buffer)
+        )
+        if deferred:
+            # 身处高开销区块：暂缓即时重排，仅标记待离开后补画
+            self._md_heavy_deferred = True
+            return
+        # 已离开（或从未进入）高开销区块：渲染到最新并复位延迟标记
+        self._md_heavy_deferred = False
         self._md_live.update(Markdown(self._md_buffer))
 
     def _end_stream(self) -> None:
         """结束当前 markdown 流式渲染：渲染最后一帧并复位状态（幂等）。"""
         if self._md_live is not None:
+            # 若尚有被延迟的高开销区块，stop 前强制补一帧，确保不丢尾部内容
+            if self._md_heavy_deferred:
+                self._md_live.update(Markdown(self._md_buffer))
             self._md_live.stop()
             self._md_live = None
             self._md_buffer = ""
+            self._md_heavy_deferred = False
         elif self._md_buffer:
             # 非终端路径：缓冲的完整回答在此一次性渲染
             self.console.print(Markdown(self._md_buffer))
             self._md_buffer = ""
+            self._md_heavy_deferred = False
 
     def end_stream(self) -> None:
         """结束当前流式回答并另起一行（cli 在每次 agent.run 返回后调用）。"""
